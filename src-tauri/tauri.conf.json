@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
+    "shortDescription": "多数据库管理工具",
+    "longDescription": "db_tools — Tauri 2 多数据库管理桌面应用，支持 MySQL、PostgreSQL、PgVector、SQLite、Redis、MongoDB、Elasticsearch、Qdrant，提供结构编辑、数据 CRUD、跨引擎同步与迁移、导出脱敏、SQL 备份以及内置 AI 智能体。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,18 +1,28 @@
-# 依赖与构建产物
-node_modules/
-dist/
-db_tools_app/src-tauri/target/
-
-# 运行时日志与本机数据
+# Logs
+logs
 *.log
-logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# 编辑器 / 系统
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# 本地覆盖
+node_modules
+dist
+dist-ssr
 *.local
+
+# Rust / Tauri 构建产物
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
