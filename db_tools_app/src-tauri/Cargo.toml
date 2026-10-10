@@ -1,0 +1,60 @@
+[package]
+name = "db_tools_app"
+version = "0.1.0"
+description = "Modern multi-database management tool with AI agent"
+authors = ["vibe"]
+edition = "2021"
+
+[lib]
+name = "db_tools_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "io-util", "process"] }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "6"
+thiserror = "2"
+futures = "0.3"
+
+# SQL databases
+bigdecimal = "0.4"
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "mysql", "postgres", "sqlite", "chrono", "json", "bigdecimal"] }
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# MongoDB
+mongodb = "3.1"
+
+# HTTP clients (Elasticsearch, AI, Qdrant)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+[profile.dev]
+incremental = true
+opt-level = 1
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+[[example]]
+name = "smoke"
+path = "examples/smoke.rs"
+
+[[example]]
+name = "full_test"
+path = "examples/full_test.rs"

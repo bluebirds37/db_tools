@@ -1,0 +1,9 @@
+{
+  "name": "db-tools-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "cd db_tools_app && npm run tauri dev",
+    "build": "cd db_tools_app && npm run tauri build",
+    "install:app": "cd db_tools_app && npm install"
+  }
+}
