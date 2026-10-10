@@ -1,0 +1,118 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+            artifact_path: src-tauri/target/release/bundle/nsis/*
+            artifact_name: db_tools-windows
+          - os: macos-latest
+            bundles: dmg,app
+            extra_args: --target universal-apple-darwin
+            artifact_path: src-tauri/target/release/bundle/dmg/*
+            artifact_name: db_tools-macos-universal
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+            artifact_path: src-tauri/target/release/bundle/deb/*
+            artifact_name: db_tools-linux-deb
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+            artifact_path: src-tauri/target/release/bundle/appimage/*
+            artifact_name: db_tools-linux-appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add macOS universal targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            patchelf \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-cargo-
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build bundles
+        run: npx tauri build --bundles ${{ matrix.bundles }} ${{ matrix.extra_args }}
+
+      - name: List artifacts
+        shell: bash
+        run: find src-tauri/target/release/bundle -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: db_tools-*
+          path: dist
+          merge-multiple: true
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release
+          find dist -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) -exec cp -v {} release/ \;
+          test -n "$(ls -A release)"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --title "db_tools $TAG" --generate-notes
+          fi
