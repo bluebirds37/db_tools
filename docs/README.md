@@ -1,6 +1,6 @@
 # 文档目录
 
-db_tools 的详细说明文档。仓库根目录的 [`README.md`](../README.md)（中文，默认）与 [`README.en.md`](../README.en.md)（English）是入口文档，本目录是按主题拆分的细册。
+AgentDB 的详细说明文档。仓库根目录的 [`README.md`](../README.md)（中文，默认）与 [`README.en.md`](../README.en.md)（English）是入口文档，本目录是按主题拆分的细册。
 
 ## 索引
 

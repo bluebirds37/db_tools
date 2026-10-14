@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "db_tools",
+  "productName": "AgentDB",
   "version": "0.1.0",
-  "identifier": "com.vibe.dbtools",
+  "identifier": "com.agentdb.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:44100",
@@ -12,13 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "db_tools — 多数据库管理",
+        "title": "AgentDB — Agent for Any Database",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
         "minHeight": 680,
         "resizable": true,
-        "center": true
+        "center": true,
+        "theme": "Dark"
       }
     ],
     "security": {
@@ -29,8 +30,8 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "shortDescription": "多数据库管理工具",
-    "longDescription": "db_tools — Tauri 2 多数据库管理桌面应用，支持 MySQL、PostgreSQL、PgVector、SQLite、Redis、MongoDB、Elasticsearch、Qdrant，提供结构编辑、数据 CRUD、跨引擎同步与迁移、导出脱敏、SQL 备份以及内置 AI 智能体。",
+    "shortDescription": "Agent for Any Database",
+    "longDescription": "AgentDB — 让 agent 管理所有数据库。基于 Tauri 2 的多数据库管理桌面应用，支持 MySQL、PostgreSQL、PgVector、SQLite、Redis、MongoDB、Elasticsearch、Qdrant，提供结构编辑、数据 CRUD、跨引擎同步与迁移、导出脱敏、SQL 备份，以及可直接操作这些引擎的内置 AI 智能体。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

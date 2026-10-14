@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ChevronRight,
   Unplug,
@@ -60,6 +61,9 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
+    // 原生标题栏跟着主题走，别把白条压在深色界面上
+    if ("__TAURI_INTERNALS__" in window)
+      void getCurrentWindow().setTheme(theme === "dark" ? "dark" : "light");
   }, [theme]);
 
   useEffect(() => {

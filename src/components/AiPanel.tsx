@@ -22,8 +22,9 @@ import {
 import { api, type AiSettings, type ChatSession } from "../services/api";
 import { useAppStore } from "../stores/appStore";
 import { FilterSelect } from "./FilterSelect";
+import { readPref, writePref } from "../services/localPrefs";
 
-const AI_PROFILE_KEY = "db_tools_ai_profile";
+const AI_PROFILE_KEY = "ai_profile";
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -141,7 +142,7 @@ export function AiPanel() {
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [profilesError, setProfilesError] = useState("");
   const [profileId, setProfileId] = useState(
-    () => localStorage.getItem(AI_PROFILE_KEY) || ""
+    () => readPref(AI_PROFILE_KEY) || ""
   );
   const [databases, setDatabases] = useState<string[]>([]);
   const [dbLoading, setDbLoading] = useState(false);
@@ -182,7 +183,7 @@ export function AiPanel() {
         const chosen = list.find((p) => p.id === cur);
         const next = chosen || list.find((p) => p.is_default) || list[0];
         const id = next?.id || "";
-        if (id !== cur) localStorage.setItem(AI_PROFILE_KEY, id);
+        if (id !== cur) writePref(AI_PROFILE_KEY, id);
         return id;
       });
     } catch (e) {
@@ -462,7 +463,7 @@ export function AiPanel() {
           }))}
           onChange={(v) => {
             setProfileId(v);
-            localStorage.setItem(AI_PROFILE_KEY, v);
+            writePref(AI_PROFILE_KEY, v);
           }}
         />
         {activeProfile && !activeProfile.api_key && (

@@ -15,7 +15,13 @@ pub fn run() {
     let state = AppState::new();
     logger::init(&state.data_dir);
     logger::install_panic_hook();
-    logger::info("app", format!("starting db_tools, data_dir={:?}", state.data_dir));
+    logger::info("app", format!("starting AgentDB, data_dir={:?}", state.data_dir));
+    if !state.legacy_moved.is_empty() {
+        logger::info(
+            "app",
+            format!("从 ~/.db_tools 迁移到 ~/.agentdb：{}", state.legacy_moved.join(", ")),
+        );
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, type ConnectionConfig } from "../services/api";
 import { reportUiError } from "../services/logger";
+import { dropPref, readPref, writePref } from "../services/localPrefs";
 
 interface AppState {
   theme: "light" | "dark";
@@ -28,7 +29,7 @@ interface AppState {
 }
 
 const getInitialTheme = (): "light" | "dark" => {
-  const saved = localStorage.getItem("db_tools_theme");
+  const saved = readPref("theme");
   if (saved === "light" || saved === "dark") return saved;
   return "dark";
 };
@@ -36,25 +37,22 @@ const getInitialTheme = (): "light" | "dark" => {
 export const UI_FONT_FALLBACK =
   '"Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
 
-const FONT_KEY = "db_tools_font_size";
-const FAMILY_KEY = "db_tools_font_family";
-// 旧版分开的界面/代码字号，现在只留一个
-const LEGACY_KEYS = ["db_tools_ui_font", "db_tools_code_font"];
-
 const getNum = (key: string, fallback: number) => {
-  const v = localStorage.getItem(key);
+  const v = readPref(key);
   const n = v ? Number(v) : NaN;
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
 const getInitialFontSize = () => {
-  const saved = localStorage.getItem(FONT_KEY);
+  const saved = readPref("font_size");
   if (saved) {
     const n = Number(saved);
     if (Number.isFinite(n) && n >= 11 && n <= 24) return n;
   }
-  const legacy = getNum(LEGACY_KEYS[0], 0);
-  LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
+  // 旧版分开的界面/代码字号，现在只留一个
+  const legacy = getNum("ui_font", 0);
+  dropPref("ui_font");
+  dropPref("code_font");
   return legacy > 0 ? legacy : 13;
 };
 
@@ -76,7 +74,7 @@ export function applyFontVars(size: number, family: string) {
 export const useAppStore = create<AppState>((set, get) => ({
   theme: getInitialTheme(),
   fontSize: getInitialFontSize(),
-  fontFamily: localStorage.getItem(FAMILY_KEY) || "",
+  fontFamily: readPref("font_family") || "",
   connections: [],
   activeConnectionId: null,
   activeDatabase: "",
@@ -85,7 +83,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loading: false,
   error: null,
   setTheme: (t) => {
-    localStorage.setItem("db_tools_theme", t);
+    writePref("theme", t);
     const apply = () => {
       document.documentElement.classList.toggle("dark", t === "dark");
       set({ theme: t });
@@ -104,13 +102,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setFontSize: (n) => {
     const size = Math.trunc(Number(n));
     const safe = Number.isFinite(size) ? Math.min(24, Math.max(11, size)) : 13;
-    localStorage.setItem(FONT_KEY, String(safe));
+    writePref("font_size", String(safe));
     applyFontVars(safe, get().fontFamily);
     set({ fontSize: safe });
   },
   setFontFamily: (f) => {
     const clean = sanitizeFamily(f);
-    localStorage.setItem(FAMILY_KEY, clean);
+    writePref("font_family", clean);
     applyFontVars(get().fontSize, clean);
     set({ fontFamily: clean });
   },

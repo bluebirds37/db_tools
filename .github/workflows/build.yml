@@ -18,20 +18,20 @@ jobs:
           - os: windows-latest
             bundles: nsis
             artifact_path: src-tauri/target/release/bundle/nsis/*
-            artifact_name: db_tools-windows
+            artifact_name: agentdb-windows
           - os: macos-latest
             bundles: dmg,app
             extra_args: --target universal-apple-darwin
             artifact_path: src-tauri/target/release/bundle/dmg/*
-            artifact_name: db_tools-macos-universal
+            artifact_name: agentdb-macos-universal
           - os: ubuntu-22.04
             bundles: deb,appimage
             artifact_path: src-tauri/target/release/bundle/deb/*
-            artifact_name: db_tools-linux-deb
+            artifact_name: agentdb-linux-deb
           - os: ubuntu-22.04
             bundles: deb,appimage
             artifact_path: src-tauri/target/release/bundle/appimage/*
-            artifact_name: db_tools-linux-appimage
+            artifact_name: agentdb-linux-appimage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +96,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: db_tools-*
+          pattern: agentdb-*
           path: dist
           merge-multiple: true
 
@@ -114,5 +114,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
           else
-            gh release create "$TAG" release/* --title "db_tools $TAG" --generate-notes
+            gh release create "$TAG" release/* --title "AgentDB $TAG" --generate-notes
           fi

@@ -35,7 +35,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             className="text-[11px] max-w-[520px] text-center"
             style={{ color: "var(--text-subtle)" }}
           >
-            错误已写入日志：~/.db_tools/logs/app.log
+            错误已写入日志：~/.agentdb/logs/app.log
           </div>
           <button
             className="btn btn-primary"

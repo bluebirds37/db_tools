@@ -1,6 +1,6 @@
 // Full feature smoke test: cargo run --example full_test
-use db_tools_app_lib::db;
-use db_tools_app_lib::models::{AiSettings, ConnectionConfig, DbKind};
+use agentdb_app_lib::db;
+use agentdb_app_lib::models::{AiSettings, ConnectionConfig, DbKind};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -46,12 +46,12 @@ async fn exercise_sql(c: &ConnectionConfig, db_name: &str) -> Result<(), String>
     s.ping().await?;
     let mut dbs = s.list_databases().await?;
     let database = if c.kind == DbKind::Mysql {
-        if !dbs.iter().any(|d| d == "db_tools_test") {
-            s.execute("", "CREATE DATABASE IF NOT EXISTS db_tools_test")
+        if !dbs.iter().any(|d| d == "agentdb_test") {
+            s.execute("", "CREATE DATABASE IF NOT EXISTS agentdb_test")
                 .await?;
-            dbs.push("db_tools_test".into());
+            dbs.push("agentdb_test".into());
         }
-        "db_tools_test".to_string()
+        "agentdb_test".to_string()
     } else if db_name.is_empty() {
         dbs.first().cloned().unwrap_or_default()
     } else {
@@ -60,39 +60,39 @@ async fn exercise_sql(c: &ConnectionConfig, db_name: &str) -> Result<(), String>
     let _tables = s.list_tables(&database, None).await?;
     let ddl = match c.kind {
         DbKind::Postgres | DbKind::Pgvector => {
-            "CREATE TABLE IF NOT EXISTS db_tools_smoke (id SERIAL PRIMARY KEY, name TEXT, n INT)"
+            "CREATE TABLE IF NOT EXISTS agentdb_smoke (id SERIAL PRIMARY KEY, name TEXT, n INT)"
         }
         DbKind::Sqlite => {
-            "CREATE TABLE IF NOT EXISTS db_tools_smoke (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, n INTEGER)"
+            "CREATE TABLE IF NOT EXISTS agentdb_smoke (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, n INTEGER)"
         }
-        _ => "CREATE TABLE IF NOT EXISTS db_tools_smoke (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64), n INT)",
+        _ => "CREATE TABLE IF NOT EXISTS agentdb_smoke (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(64), n INT)",
     };
     s.execute(&database, ddl).await?;
     let ins = json!({"name": "smoke", "n": 1});
     s.insert_row(
         &database,
-        "db_tools_smoke",
+        "agentdb_smoke",
         ins.as_object().cloned().unwrap_or_default(),
     )
     .await?;
     let select = match c.kind {
-        DbKind::Mysql => format!("SELECT * FROM `{database}`.db_tools_smoke"),
+        DbKind::Mysql => format!("SELECT * FROM `{database}`.agentdb_smoke"),
         DbKind::Postgres | DbKind::Pgvector => {
-            "SELECT * FROM db_tools_smoke".to_string()
+            "SELECT * FROM agentdb_smoke".to_string()
         }
-        DbKind::Sqlite => "SELECT * FROM db_tools_smoke".to_string(),
-        _ => "SELECT * FROM db_tools_smoke".to_string(),
+        DbKind::Sqlite => "SELECT * FROM agentdb_smoke".to_string(),
+        _ => "SELECT * FROM agentdb_smoke".to_string(),
     };
     let page = s.query_page(&database, &select, 1, 10).await?;
     if page.rows.is_empty() {
         return Err("query returned 0 rows".into());
     }
-    let cols = s.list_columns(&database, None, "db_tools_smoke").await?;
+    let cols = s.list_columns(&database, None, "agentdb_smoke").await?;
     if cols.is_empty() {
         return Err("no columns".into());
     }
-    let _ = s.list_indexes(&database, None, "db_tools_smoke").await?;
-    let _ = s.list_foreign_keys(&database, None, "db_tools_smoke").await?;
+    let _ = s.list_indexes(&database, None, "agentdb_smoke").await?;
+    let _ = s.list_foreign_keys(&database, None, "agentdb_smoke").await?;
     let pk = json!({"id": page.rows[0][0].clone()})
         .as_object()
         .cloned()
@@ -101,9 +101,9 @@ async fn exercise_sql(c: &ConnectionConfig, db_name: &str) -> Result<(), String>
         .as_object()
         .cloned()
         .unwrap_or_default();
-    s.update_row(&database, "db_tools_smoke", pk.clone(), upd)
+    s.update_row(&database, "agentdb_smoke", pk.clone(), upd)
         .await?;
-    s.delete_row(&database, "db_tools_smoke", pk).await?;
+    s.delete_row(&database, "agentdb_smoke", pk).await?;
     Ok(())
 }
 
@@ -147,7 +147,7 @@ async fn main() {
     opts.insert(
         "path".to_string(),
         std::env::temp_dir()
-            .join("db_tools_smoke.db")
+            .join("agentdb_smoke.db")
             .to_string_lossy()
             .to_string(),
     );
@@ -164,16 +164,16 @@ async fn main() {
             s.ping().await?;
             let _ = s.list_databases().await?;
             let _ = s.list_tables("db0", None).await?;
-            let data = json!({"key": "db_tools:smoke", "value": "hello"})
+            let data = json!({"key": "agentdb:smoke", "value": "hello"})
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
             s.insert_row("db0", "string", data).await?;
-            let page = s.query_page("db0", "db_tools:*", 1, 10).await?;
+            let page = s.query_page("db0", "agentdb:*", 1, 10).await?;
             if page.rows.is_empty() {
                 return Err("redis key not found".into());
             }
-            let pk = json!({"key": "db_tools:smoke"})
+            let pk = json!({"key": "agentdb:smoke"})
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
@@ -209,16 +209,16 @@ async fn main() {
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
-            s.insert_row(&database, "db_tools_smoke", data).await?;
-            let page = s.query_page(&database, "db_tools_smoke|{}", 1, 10).await?;
+            s.insert_row(&database, "agentdb_smoke", data).await?;
+            let page = s.query_page(&database, "agentdb_smoke|{}", 1, 10).await?;
             if page.rows.is_empty() {
                 return Err("mongo no docs".into());
             }
-            let _ = s.list_columns(&database, None, "db_tools_smoke").await?;
-            let _ = s.list_indexes(&database, None, "db_tools_smoke").await?;
+            let _ = s.list_columns(&database, None, "agentdb_smoke").await?;
+            let _ = s.list_indexes(&database, None, "agentdb_smoke").await?;
             if let Some(id) = page.rows[0].first() {
                 let pk = json!({"_id": id}).as_object().cloned().unwrap_or_default();
-                s.delete_row(&database, "db_tools_smoke", pk).await?;
+                s.delete_row(&database, "agentdb_smoke", pk).await?;
             }
             Ok(())
         },
@@ -240,11 +240,11 @@ async fn main() {
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
-            s.insert_row("", "db_tools_smoke", data).await?;
+            s.insert_row("", "agentdb_smoke", data).await?;
             let page = s
                 .query_page(
                     "",
-                    "db_tools_smoke|{\"query\":{\"match_all\":{}}}",
+                    "agentdb_smoke|{\"query\":{\"match_all\":{}}}",
                     1,
                     10,
                 )
@@ -252,7 +252,7 @@ async fn main() {
             if page.rows.is_empty() {
                 return Err("es no docs".into());
             }
-            let _ = s.list_columns("", None, "db_tools_smoke").await?;
+            let _ = s.list_columns("", None, "agentdb_smoke").await?;
             if let Some(id) = page
                 .columns
                 .iter()
@@ -260,7 +260,7 @@ async fn main() {
                 .and_then(|i| page.rows[0].get(i).cloned())
             {
                 let pk = json!({"_id": id}).as_object().cloned().unwrap_or_default();
-                s.delete_row("", "db_tools_smoke", pk).await?;
+                s.delete_row("", "agentdb_smoke", pk).await?;
             }
             Ok(())
         },

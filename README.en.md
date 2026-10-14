@@ -1,6 +1,8 @@
-# db_tools
+# AgentDB
 
 [中文文档](./README.md) | **English**
+
+> **Agent for Any Database** — let an agent drive every database you have.
 
 A desktop multi-database management tool built with **Tauri 2 + React 19**, with a light/dark theme, an animation system that respects `prefers-reduced-motion`, and a built-in AI agent that can operate the databases through tool calls.
 
@@ -66,7 +68,7 @@ Nothing is pre-configured: every connection is one you add yourself, and choosin
 
 - Several model profiles can be stored, exactly one marked default; the agent panel switches between them per conversation.
 - **Per-conversation scope**: pick a connection and database (or copy the current selection from the tree, table included) and it is saved on the session — the tool schema treats `connection_id` / `database` / `table` as optional, so "top 10 rows of this table" needs no round trip through `list_connections`.
-- **Images**: paste, drop or choose screenshots (up to 4 per message, 8 MB each); they are stored as files under `~/.db_tools/ai_images/` so history keeps them, and sent as `image_url` / `input_image` / Anthropic base64 blocks depending on the protocol. The most recent images are re-attached when you ask a follow-up.
+- **Images**: paste, drop or choose screenshots (up to 4 per message, 8 MB each); they are stored as files under `~/.agentdb/ai_images/` so history keeps them, and sent as `image_url` / `input_image` / Anthropic base64 blocks depending on the protocol. The most recent images are re-attached when you ask a follow-up.
 - Tool calling, conversation history, long-term memory, context compression.
 
 ### Appearance
@@ -136,7 +138,7 @@ Tauri **cannot cross-compile**: the Windows installer must be built on Windows, 
 
 | Platform | Runner | Artifact |
 | --- | --- | --- |
-| Windows | `windows-latest` | NSIS installer `db_tools_<version>_x64-setup.exe` |
+| Windows | `windows-latest` | NSIS installer `AgentDB_<version>_x64-setup.exe` |
 | macOS | `macos-latest`, `--target universal-apple-darwin` | universal `.dmg` (Apple Silicon + Intel) |
 | Ubuntu / Debian | `ubuntu-22.04` | `.deb` |
 | Generic Linux | `ubuntu-22.04` | `.AppImage` |
@@ -164,7 +166,7 @@ Output lands in `src-tauri/target/release/bundle/<type>/`.
 
 ## Local data
 
-Connections, chat sessions, model profiles and logs live in `~/.db_tools/`:
+Connections, chat sessions, model profiles and logs live in `~/.agentdb/`:
 
 | File | Contents |
 | --- | --- |
@@ -176,6 +178,8 @@ Connections, chat sessions, model profiles and logs live in `~/.db_tools/`:
 | `logs/` | command log, tail-able from the app |
 
 This directory is the only place that data lives: the binary ships no connections, so a machine without `connections.json` starts with an empty list and the sidebar invites you to create one.
+
+The project was renamed from db_tools to AgentDB. On first launch the known entries in the old `~/.db_tools/` directory are moved into `~/.agentdb/` — never overwritten, and the old directory is only removed once it is empty. Browser-side preferences (theme, font, chosen model, …) migrate from `db_tools_*` keys to `agentdb_*` the first time they are read.
 
 ## Notes
 

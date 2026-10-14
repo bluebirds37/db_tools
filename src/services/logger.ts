@@ -42,7 +42,7 @@ async function report(payload: {
     // ignore - backend may not be ready
   }
   // also keep a console breadcrumb
-  console.error("[db_tools]", payload.message, payload.stack || "");
+  console.error("[AgentDB]", payload.message, payload.stack || "");
 }
 
 export async function reportUiError(

@@ -451,7 +451,7 @@ pub async fn dump_table_sql(
 ) -> Result<String, String> {
     let mut out = String::new();
     out.push_str(&format!(
-        "-- db_tools dump\n-- table: {table}\n-- at: {}\n\n",
+        "-- AgentDB dump\n-- table: {table}\n-- at: {}\n\n",
         chrono::Utc::now().to_rfc3339()
     ));
     let cols = session.list_columns(database, None, table).await?;
@@ -497,7 +497,7 @@ pub async fn dump_database_sql(
     let tables = session.list_tables(database, None).await?;
     let mut out = String::new();
     out.push_str(&format!(
-        "-- db_tools database dump\n-- db: {database}\n-- at: {}\n\n",
+        "-- AgentDB database dump\n-- db: {database}\n-- at: {}\n\n",
         chrono::Utc::now().to_rfc3339()
     ));
     for t in tables {

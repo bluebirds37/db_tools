@@ -42,7 +42,7 @@ impl MongoSession {
         let mut options = ClientOptions::parse(&url)
             .await
             .map_err(|e| format!("Mongo 连接串错误: {e}"))?;
-        options.app_name = Some("db_tools".into());
+        options.app_name = Some("AgentDB".into());
         options.server_selection_timeout = Some(connect_timeout(config));
         let client = Client::with_options(options).map_err(|e| e.to_string())?;
         client

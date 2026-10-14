@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    db_tools_app_lib::run()
+    agentdb_app_lib::run()
 }

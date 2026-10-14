@@ -461,7 +461,7 @@ export function ConnectionSidebar({
               </div>
             </div>
             <div className="text-[11px] mb-2" style={{ color: "var(--text-subtle)" }}>
-              {logPath || "日志目录: ~/.db_tools/logs/app.log"}
+              {logPath || "日志目录: ~/.agentdb/logs/app.log"}
             </div>
             <pre
               className="mono"

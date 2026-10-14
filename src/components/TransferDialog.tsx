@@ -18,6 +18,7 @@ import {
   type SyncReport,
 } from "../services/api";
 import { FilterSelect, fsOptions } from "./FilterSelect";
+import { readPref, writePref } from "../services/localPrefs";
 
 export type TransferMode =
   | "export"
@@ -55,7 +56,7 @@ const SENSITIVE: { re: RegExp; mode: MaskMode }[] = [
   { re: /^(real_?name|full_?name|name|姓名)$/i, mode: "name" },
 ];
 
-const MASK_STORE_KEY = "db_tools_export_masks";
+const MASK_STORE_KEY = "export_masks";
 
 const SYNC_STATUS: Record<string, string> = {
   created: "已建目标",
@@ -65,7 +66,7 @@ const SYNC_STATUS: Record<string, string> = {
 
 function loadStoredRules(): MaskRule[] {
   try {
-    const raw = localStorage.getItem(MASK_STORE_KEY);
+    const raw = readPref(MASK_STORE_KEY);
     const list = raw ? JSON.parse(raw) : [];
     return Array.isArray(list) ? (list as MaskRule[]) : [];
   } catch {
@@ -149,7 +150,7 @@ export function TransferDialog({
 
   useEffect(() => {
     try {
-      localStorage.setItem(MASK_STORE_KEY, JSON.stringify(maskRules));
+      writePref(MASK_STORE_KEY, JSON.stringify(maskRules));
     } catch {
       /* 存储被禁用时忽略 */
     }

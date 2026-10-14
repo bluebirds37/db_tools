@@ -1,6 +1,6 @@
 use crate::models::{AiSettings, ChatSession, ConnectionConfig, MemoryStore};
 use uuid::Uuid;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 /// Recover from lock poisoning instead of panicking the whole app.
@@ -93,22 +93,25 @@ pub struct AppState {
     pub memory: Mutex<MemoryStore>,
     pub ai_profiles: Mutex<Vec<AiSettings>>,
     pub data_dir: PathBuf,
+    /// 从旧目录 `~/.db_tools` 搬过来的条目，启动后写进日志
+    pub legacy_moved: Vec<String>,
 }
 
 impl AppState {
-    /// 配置全部放在 `~/.db_tools/` 这一个目录里（同多数 CLI/桌面工具的点目录约定），
+    /// 配置全部放在 `~/.agentdb/` 这一个目录里（同多数 CLI/桌面工具的点目录约定），
     /// 代码里不内置任何连接信息：没有 connections.json 就是空列表，界面引导新建。
     pub fn new() -> Self {
-        let data_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".db_tools");
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = home.join(".agentdb");
         let _ = std::fs::create_dir_all(&data_dir);
+        let moved = migrate_legacy_dir(&home.join(".db_tools"), &data_dir);
         let state = Self {
             connections: Mutex::new(Vec::new()),
             sessions: Mutex::new(Vec::new()),
             memory: Mutex::new(MemoryStore::default()),
             ai_profiles: Mutex::new(Vec::new()),
             data_dir,
+            legacy_moved: moved,
         };
         state.load_all();
         state
@@ -211,5 +214,88 @@ impl AppState {
                 let _ = std::fs::remove_file(path);
             }
         }
+    }
+}
+
+/// 项目由 db_tools 改名为 AgentDB：首次启动把旧目录里的已知条目搬过来。
+/// 只搬不覆盖；旧目录搬空了就删掉，还有别的东西就原样留着。
+pub fn migrate_legacy_dir(old: &Path, new: &Path) -> Vec<String> {
+    const ENTRIES: [&str; 7] = [
+        "connections.json",
+        "chat_sessions.json",
+        "ai_settings.json",
+        "memory.json",
+        "logs",
+        "ai_images",
+        "local.db",
+    ];
+    let mut moved = Vec::new();
+    if !old.is_dir() {
+        return moved;
+    }
+    for name in ENTRIES {
+        let (from, to) = (old.join(name), new.join(name));
+        if !from.exists() || to.exists() {
+            continue;
+        }
+        match std::fs::rename(&from, &to) {
+            Ok(_) => moved.push(name.to_string()),
+            // 跨卷之类的极端情况：留在原地并说清楚，绝不静默丢数据
+            Err(e) => eprintln!("迁移 {name} 失败，仍留在 {from:?}：{e}"),
+        }
+    }
+    if old.read_dir().map(|mut r| r.next().is_none()).unwrap_or(false) {
+        let _ = std::fs::remove_dir(old);
+    }
+    moved
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("agentdb_mig_{tag}_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn moves_legacy_entries_and_drops_empty_dir() {
+        let old = tmp_dir("a_old");
+        let new = tmp_dir("a_new");
+        std::fs::write(old.join("connections.json"), "[]").unwrap();
+        std::fs::create_dir(old.join("logs")).unwrap();
+        std::fs::write(old.join("logs").join("app.log"), "x").unwrap();
+
+        let moved = migrate_legacy_dir(&old, &new);
+        assert_eq!(moved, vec!["connections.json".to_string(), "logs".to_string()]);
+        assert_eq!(std::fs::read_to_string(new.join("connections.json")).unwrap(), "[]");
+        assert!(new.join("logs").join("app.log").exists());
+        assert!(!old.exists(), "搬空后旧目录应被清掉");
+        let _ = std::fs::remove_dir_all(new);
+    }
+
+    #[test]
+    fn never_overwrites_and_keeps_source() {
+        let old = tmp_dir("b_old");
+        let new = tmp_dir("b_new");
+        std::fs::write(old.join("memory.json"), "OLD").unwrap();
+        std::fs::write(new.join("memory.json"), "NEW").unwrap();
+
+        let moved = migrate_legacy_dir(&old, &new);
+        assert!(moved.is_empty());
+        assert_eq!(std::fs::read_to_string(new.join("memory.json")).unwrap(), "NEW");
+        assert_eq!(std::fs::read_to_string(old.join("memory.json")).unwrap(), "OLD");
+        let _ = std::fs::remove_dir_all(old);
+        let _ = std::fs::remove_dir_all(new);
+    }
+
+    #[test]
+    fn no_legacy_dir_is_noop() {
+        let missing = std::env::temp_dir().join(format!("agentdb_missing_{}", Uuid::new_v4()));
+        let new = tmp_dir("c_new");
+        assert!(migrate_legacy_dir(&missing, &new).is_empty());
+        let _ = std::fs::remove_dir_all(new);
     }
 }

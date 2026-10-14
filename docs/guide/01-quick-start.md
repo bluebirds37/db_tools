@@ -54,4 +54,4 @@ cargo run --example full_test
 
 ## 本机数据与日志
 
-配置都存在 `~/.db_tools/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`、`memory.json`，日志在同目录 `logs/`，也可点左下「日志」查看尾部。应用运行时的建连、执行、失败原因都会写进日志，界面上的报错与日志内容一致。
+配置都存在 `~/.agentdb/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`、`memory.json`，日志在同目录 `logs/`，也可点左下「日志」查看尾部。应用运行时的建连、执行、失败原因都会写进日志，界面上的报错与日志内容一致。

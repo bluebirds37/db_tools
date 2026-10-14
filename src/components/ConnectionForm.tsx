@@ -17,6 +17,7 @@ import { useAppStore } from "../stores/appStore";
 import { api, type ConnectionConfig, type DbKind } from "../services/api";
 import { KindBadge, KIND_META } from "./ConnectionSidebar";
 import { FilterSelect } from "./FilterSelect";
+import { readPref, writePref } from "../services/localPrefs";
 
 type CatId = "rel" | "doc" | "kv" | "search" | "vector";
 
@@ -39,11 +40,11 @@ const KINDS: { value: DbKind; label: string; cat: CatId; desc: string }[] = [
   { value: "qdrant", label: "Qdrant", cat: "vector", desc: "向量相似度检索服务" },
 ];
 
-const RECENT_KEY = "db_tools_recent_kinds";
+const RECENT_KEY = "recent_kinds";
 
 const readRecent = (): DbKind[] => {
   try {
-    const raw = localStorage.getItem(RECENT_KEY);
+    const raw = readPref(RECENT_KEY);
     const list = raw ? (JSON.parse(raw) as DbKind[]) : [];
     return Array.isArray(list)
       ? list.filter((k) => KINDS.some((x) => x.value === k)).slice(0, 4)
@@ -56,7 +57,7 @@ const readRecent = (): DbKind[] => {
 const pushRecent = (kind: DbKind) => {
   try {
     const next = [kind, ...readRecent().filter((k) => k !== kind)].slice(0, 4);
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    writePref(RECENT_KEY, JSON.stringify(next));
   } catch {
     /* 存不下就丢掉最近使用，不影响主流程 */
   }

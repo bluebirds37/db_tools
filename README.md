@@ -1,6 +1,8 @@
-# db_tools
+# AgentDB
 
 [**中文**](./README.md) | [English](./README.en.md)
+
+> **Agent for Any Database** —— 让 agent 管理所有数据库。
 
 基于 Tauri 2 + React 19 的多数据库管理桌面应用，支持深色 / 浅色主题与内置 AI 智能体。
 
@@ -42,7 +44,7 @@ Tauri **不能跨平台编译**：Windows 安装包必须在 Windows 上打，ma
 
 | 平台 | 构建 | 产物 |
 | --- | --- | --- |
-| Windows | `windows-latest` | NSIS 安装包 `db_tools_<版本>_x64-setup.exe` |
+| Windows | `windows-latest` | NSIS 安装包 `AgentDB_<版本>_x64-setup.exe` |
 | macOS | `macos-latest`，`--target universal-apple-darwin` | 通用二进制 `.dmg`（Apple Silicon + Intel） |
 | Ubuntu / Debian | `ubuntu-22.04` | `.deb` |
 | 通用 Linux | `ubuntu-22.04` | `.AppImage` |
@@ -120,5 +122,7 @@ MySQL、PostgreSQL、PgVector、SQLite、Redis、MongoDB、Elasticsearch、Qdran
 
 ## 数据目录
 
-连接、会话、模型配置、记忆与日志保存在 `~/.db_tools/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`（数组，含 `is_default`）、`memory.json`、`ai_images/`、`logs/`。
+连接、会话、模型配置、记忆与日志保存在 `~/.agentdb/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`（数组，含 `is_default`）、`memory.json`、`ai_images/`、`logs/`。
 这是唯一的存储位置：程序不内置任何连接信息，删掉 `connections.json` 就等于从零开始新建连接。
+
+项目由 db_tools 改名为 AgentDB，首次启动会把旧目录 `~/.db_tools/` 里的已知条目（上面这些文件与目录）一次性搬到 `~/.agentdb/`：只搬不覆盖，搬完旧目录空了才删，否则原样留着；界面上记在本机的偏好（主题、字体、模型选择等）同样从 `db_tools_*` 键自动迁到 `agentdb_*`。

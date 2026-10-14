@@ -1,12 +1,12 @@
 [package]
-name = "db_tools_app"
+name = "agentdb_app"
 version = "0.1.0"
 description = "Modern multi-database management tool with AI agent"
 authors = ["vibe"]
 edition = "2021"
 
 [lib]
-name = "db_tools_app_lib"
+name = "agentdb_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

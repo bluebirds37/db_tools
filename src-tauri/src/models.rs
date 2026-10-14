@@ -201,7 +201,7 @@ impl Default for AiSettings {
 }
 
 pub fn default_system_prompt() -> String {
-    "你是 db_tools 的内置数据库智能助手。你可以帮助用户管理连接、浏览库表、执行 SQL 与增删改查。\n\
+    "你是 AgentDB 的内置数据库智能助手。你可以帮助用户管理连接、浏览库表、执行 SQL 与增删改查。\n\
      回答请使用中文，简洁准确。执行写操作前请确认表结构。优先使用提供的工具完成任务。"
         .into()
 }
