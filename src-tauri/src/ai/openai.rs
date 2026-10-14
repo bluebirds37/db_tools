@@ -6,46 +6,75 @@ fn clamp_max_tokens(n: u32) -> u32 {
     n.clamp(1, 32_768)
 }
 
-fn build_messages(messages: &[(String, String)]) -> Vec<Value> {
-    let mut api_messages = Vec::new();
-    for (role, content) in messages {
-        // Some gateways reject empty content
-        let text = if content.trim().is_empty() {
-            "(empty)".to_string()
-        } else {
-            content.clone()
-        };
-        let r = match role.as_str() {
-            "system" => "system",
-            "assistant" => "assistant",
-            // tool role often requires tool_call_id; fold into user for compatibility
-            "tool" | _ => "user",
-        };
-        if r == "system" && api_messages.is_empty() {
-            api_messages.push(json!({ "role": "system", "content": text }));
-        } else if r == "system" {
-            // merge extra system into previous
-            if let Some(last) = api_messages.last_mut() {
-                if last["role"] == "system" {
-                    let prev = last["content"].as_str().unwrap_or("");
-                    *last = json!({ "role": "system", "content": format!("{prev}\n{text}") });
-                    continue;
-                }
+/// 统一角色：system 合并、tool 折进 user、首条不能是 assistant
+fn normalize(messages: &[AiMessage]) -> Vec<AiMessage> {
+    let mut out: Vec<AiMessage> = Vec::new();
+    for m in messages {
+        // Some gateways reject empty content；只发图时留空由 content parts 承载
+        let text = if m.content.trim().is_empty() {
+            if m.images.is_empty() {
+                "(empty)".to_string()
+            } else {
+                String::new()
             }
-            api_messages.push(json!({ "role": "system", "content": text }));
         } else {
-            api_messages.push(json!({ "role": "user", "content": text }));
+            m.content.clone()
+        };
+        match m.role.as_str() {
+            "system" => {
+                if let Some(last) = out.last_mut() {
+                    if last.role == "system" {
+                        last.content.push('\n');
+                        last.content.push_str(&text);
+                        continue;
+                    }
+                }
+                out.push(AiMessage::text("system", text));
+            }
+            "assistant" => out.push(AiMessage::text("assistant", text)),
+            // tool role often requires tool_call_id; fold into user for compatibility
+            _ => out.push(AiMessage {
+                role: "user".into(),
+                content: text,
+                images: m.images.clone(),
+            }),
         }
     }
     // first message must not be assistant for many providers
-    if api_messages
-        .first()
-        .map(|m| m["role"] == "assistant")
-        .unwrap_or(false)
-    {
-        api_messages.insert(0, json!({ "role": "user", "content": "Continue." }));
+    if out.first().map(|m| m.role == "assistant").unwrap_or(false) {
+        out.insert(0, AiMessage::text("user", "Continue."));
     }
-    api_messages
+    out
+}
+
+/// Chat Completions 的多模态 content：无图时保持纯字符串，兼容性最好
+fn chat_content(m: &AiMessage) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts: Vec<Value> = Vec::new();
+    if !m.content.trim().is_empty() {
+        parts.push(json!({ "type": "text", "text": m.content }));
+    }
+    for url in &m.images {
+        parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+    }
+    Value::Array(parts)
+}
+
+/// Responses API 的 input 内容块
+fn responses_content(m: &AiMessage) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts: Vec<Value> = Vec::new();
+    if !m.content.trim().is_empty() {
+        parts.push(json!({ "type": "input_text", "text": m.content }));
+    }
+    for url in &m.images {
+        parts.push(json!({ "type": "input_image", "image_url": url }));
+    }
+    Value::Array(parts)
 }
 
 fn parse_openai_body(val: &Value) -> Result<AiChatResponse, String> {
@@ -187,33 +216,20 @@ fn base_trim(settings: &AiSettings) -> String {
 
 pub async fn complete(
     settings: &AiSettings,
-    messages: &[(String, String)],
+    messages: &[AiMessage],
     tools_json: Option<Value>,
     force_tools: bool,
 ) -> Result<AiChatResponse, String> {
-    let api_messages = build_messages(messages);
+    let msgs = normalize(messages);
     let max_tokens = clamp_max_tokens(settings.max_tokens);
     let use_responses = settings.api_style == "responses";
 
     if use_responses {
         // OpenAI Responses API
-        let mut input = Vec::new();
-        if let Some(sys) = api_messages
+        let input: Vec<Value> = msgs
             .iter()
-            .find(|m| m["role"] == "system")
-            .and_then(|m| m["content"].as_str())
-        {
-            input.push(json!({ "role": "system", "content": sys }));
-        }
-        for m in &api_messages {
-            if m["role"] == "system" {
-                continue;
-            }
-            input.push(json!({
-                "role": m["role"],
-                "content": m["content"]
-            }));
-        }
+            .map(|m| json!({ "role": m.role, "content": responses_content(m) }))
+            .collect();
         let mut body = json!({
             "model": settings.model,
             "input": input,
@@ -241,6 +257,10 @@ pub async fn complete(
     }
 
     // Chat Completions (default) — with progressive fallback for picky gateways
+    let api_messages: Vec<Value> = msgs
+        .iter()
+        .map(|m| json!({ "role": m.role, "content": chat_content(m) }))
+        .collect();
     let mut attempts: Vec<Value> = Vec::new();
 
     let mut full = json!({

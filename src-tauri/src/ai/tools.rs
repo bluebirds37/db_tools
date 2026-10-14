@@ -1,4 +1,5 @@
 use crate::db;
+use crate::models::ChatScope;
 use crate::store::{lock_or_recover, AppState};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -102,19 +103,46 @@ pub async fn get_session(
     cache.get(state, connection_id).await
 }
 
+/// 工具参数优先，缺省回落到会话范围；空字符串按没填处理
+pub fn scope_arg(args: &Value, key: &str, fallback: &Option<String>) -> String {
+    let given = args
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    given
+        .or_else(|| {
+            fallback
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+/// 模型省略 connection_id / database / table 时按会话已选范围补齐：
+/// 面板选好库后不必再为拿 ID 先绕一圈 list_connections。
 pub async fn execute_tool(
     state: &AppState,
     cache: &SharedCache,
     name: &str,
     args: &Value,
+    scope: &ChatScope,
 ) -> Result<String, String> {
     let arg = |k: &str| args.get(k).cloned().unwrap_or(Value::Null);
-    let arg_str = |k: &str| {
-        args.get(k)
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_default()
-    };
+    let pick = |k: &str, fallback: &Option<String>| scope_arg(args, k, fallback);
+    let cid = pick("connection_id", &scope.connection_id);
+    let database = pick("database", &scope.database);
+    let table = pick("table", &scope.table);
+
+    // 只有这两个工具不需要连接
+    if cid.is_empty() && name != "list_connections" && name != "remember_fact" {
+        return Err(
+            "尚未确定连接：请在智能体面板选好连接与库，或先调用 list_connections 后带上 connection_id"
+                .to_string(),
+        );
+    }
 
     match name {
         "list_connections" => {
@@ -122,22 +150,16 @@ pub async fn execute_tool(
             Ok(serde_json::to_string_pretty(&list).unwrap_or_default())
         }
         "list_databases" => {
-            let cid = arg_str("connection_id");
             let s = get_session(cache, state, &cid).await?;
             let dbs = s.list_databases().await?;
             Ok(json!(dbs).to_string())
         }
         "list_tables" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
             let s = get_session(cache, state, &cid).await?;
             let tables = s.list_tables(&database, None).await?;
             Ok(serde_json::to_string_pretty(&tables).unwrap_or_default())
         }
         "describe_table" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let table = arg_str("table");
             let s = get_session(cache, state, &cid).await?;
             let cols = s.list_columns(&database, None, &table).await?;
             let idx = s.list_indexes(&database, None, &table).await.unwrap_or_default();
@@ -153,9 +175,7 @@ pub async fn execute_tool(
             .to_string())
         }
         "query_data" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let sql = arg_str("sql");
+            let sql = pick("sql", &None);
             let page = arg("page").as_u64().unwrap_or(1).max(1);
             let page_size = arg("page_size").as_u64().unwrap_or(20).clamp(1, 200);
             let s = get_session(cache, state, &cid).await?;
@@ -177,26 +197,18 @@ pub async fn execute_tool(
             Ok(serde_json::to_string(&compact).unwrap_or_default())
         }
         "execute_sql" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let sql = arg_str("sql");
+            let sql = pick("sql", &None);
             let s = get_session(cache, state, &cid).await?;
             let res = s.execute(&database, &sql).await?;
             Ok(serde_json::to_string(&res).unwrap_or_default())
         }
         "insert_row" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let table = arg_str("table");
             let data = arg("data").as_object().cloned().unwrap_or_default();
             let s = get_session(cache, state, &cid).await?;
             let res = s.insert_row(&database, &table, data).await?;
             Ok(serde_json::to_string(&res).unwrap_or_default())
         }
         "update_row" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let table = arg_str("table");
             let pk = arg("pk").as_object().cloned().unwrap_or_default();
             let data = arg("data").as_object().cloned().unwrap_or_default();
             let s = get_session(cache, state, &cid).await?;
@@ -204,20 +216,44 @@ pub async fn execute_tool(
             Ok(serde_json::to_string(&res).unwrap_or_default())
         }
         "delete_row" => {
-            let cid = arg_str("connection_id");
-            let database = arg_str("database");
-            let table = arg_str("table");
             let pk = arg("pk").as_object().cloned().unwrap_or_default();
             let s = get_session(cache, state, &cid).await?;
             let res = s.delete_row(&database, &table, pk).await?;
             Ok(serde_json::to_string(&res).unwrap_or_default())
         }
         "remember_fact" => {
-            let content = arg_str("content");
+            let content = pick("content", &None);
             crate::ai::memory::add_fact(&mut lock_or_recover(&state.memory), &content);
             state.save_memory();
             Ok(json!({ "ok": true, "content": content }).to_string())
         }
         other => Err(format!("未知工具: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_arg_beats_session_scope() {
+        let scope = ChatScope {
+            connection_id: Some("c1".into()),
+            database: Some("db1".into()),
+            table: None,
+        };
+        let args = json!({ "connection_id": "c2", "database": "  " });
+        assert_eq!(scope_arg(&args, "connection_id", &scope.connection_id), "c2");
+        // 空白按没填处理，回落到会话
+        assert_eq!(scope_arg(&args, "database", &scope.database), "db1");
+        assert_eq!(scope_arg(&args, "table", &scope.table), "");
+    }
+
+    #[test]
+    fn numeric_args_still_readable() {
+        let args = json!({ "sql": "select 1", "page": 3 });
+        assert_eq!(scope_arg(&args, "sql", &None), "select 1");
+        assert_eq!(args.get("page").and_then(|v| v.as_u64()), Some(3));
     }
 }

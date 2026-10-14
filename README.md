@@ -18,12 +18,12 @@
 | --- | --- |
 | [01 快速开始](docs/guide/01-quick-start.md) | 安装、开发运行、界面分区、快捷键、日志位置 |
 | [02 连接管理](docs/guide/02-connections.md) | 分类选择器新建连接、测试、建连超时与不阻塞 |
-| [03 浏览与数据](docs/guide/03-browse-and-data.md) | 库表树、分页数据网格、增删改与写操作回显 |
+| [03 浏览与数据](docs/guide/03-browse-and-data.md) | 库表树、分页数据网格、筛选与排序、增删改与写操作回显 |
 | [04 结构设计](docs/guide/04-structure-design.md) | 数据库设计器、可视化建表、字段 / 索引 / 外键 |
 | [05 非关系引擎](docs/guide/05-non-sql-engines.md) | Redis 命令、ES / Qdrant REST、Mongo 查询与常用操作 |
 | [06 同步与迁移](docs/guide/06-sync-and-migration.md) | 跨引擎同步、MySQL↔PG 迁移、逐表结果报告 |
 | [07 导出与备份](docs/guide/07-export-mask-backup.md) | CSV / Excel 导出、列级脱敏、SQL 备份 |
-| [08 AI 智能体](docs/guide/08-ai-agent.md) | 多模型配置与默认、对话内切换、工具调用与记忆 |
+| [08 AI 智能体](docs/guide/08-ai-agent.md) | 多模型配置与默认、会话取数范围、图片提问、工具调用与记忆 |
 | [09 外观与字体](docs/guide/09-appearance.md) | 主题、全局字体设置、动效与状态反馈 |
 
 ## 开发
@@ -104,20 +104,21 @@ npx tauri build --bundles deb,appimage                  # Linux（先装 libwebk
 ## 支持的数据库
 
 MySQL、PostgreSQL、PgVector、SQLite、Redis、MongoDB、Elasticsearch、Qdrant。
-本机测试容器默认端口：MySQL 3307、PostgreSQL 15432、PgVector 15433、Redis 16379、MongoDB 27017、Elasticsearch 9200、Qdrant 6333；SQLite 用文件路径。
+连接全部由你自己在「新建连接」里添加，切换类型时会带上该引擎的标准默认端口。
 
 ## 能力
 
 - **连接**：分类选择器（关系型 / 文档型 / 键值 / 搜索 / 向量）、新建与编辑、测试连接、最近使用
 - **浏览与结构**：库 / 表 / 字段 / 索引 / 外键；数据库设计器（字符集、注释、PG 扩展）、可视化建表、字段与索引外键的增删改
-- **数据**：分页查询、插入、编辑、删除；写操作回显后端结果
+- **数据**：分页查询、按字段拼筛选条件（并且 / 或者、包含 / 介于 / 在列表中等，按字段类型给运算符）与排序，点表头即可升降序切换；插入、编辑、删除；写操作回显后端结果
 - **多入口**：SQL 工作台；Redis 走命令、ES / Qdrant 走 REST（`METHOD path [json]`）、Mongo 走查询文档，均附「常用操作」可点选清单
 - **同步与迁移**：整库 / 单表同步（可跨引擎，落到 Redis 键或 Mongo 文档）、MySQL→PostgreSQL 迁移（类型归一、索引、自增序列回填），执行后给出逐表结果报告
 - **导出与备份**：CSV / Excel 导出，支持列级脱敏（掩码、保留前后位、邮箱 / 手机 / 身份证 / 银行卡 / 哈希 / 置空 / 替换）；SQL 转储备份
 - **行数上限**：导出 / 备份 / 同步 / 迁移统一语义，填 `0` 或 `-1` 表示全部行，逐页取数不整表驻留
-- **AI 智能体**：可保存多套模型配置并指定一个默认，对话中随时切换；工具调用、对话历史、长期记忆、上下文压缩
+- **AI 智能体**：可保存多套模型配置并指定一个默认，对话中随时切换；会话可绑定连接 / 库 / 表作为取数范围（工具调用缺省自动补齐），支持粘贴或拖入截图提问（OpenAI `image_url` / Responses `input_image` / Anthropic base64）；工具调用、对话历史、长期记忆、上下文压缩
 - **外观**：深浅主题、一个全局字体与字号设置（界面与代码共用）、过渡动效并尊重 `prefers-reduced-motion`
 
 ## 数据目录
 
-连接、会话、模型配置、记忆与日志保存在 `~/.db_tools/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`（数组，含 `is_default`）、`memory.json`、`logs/`。
+连接、会话、模型配置、记忆与日志保存在 `~/.db_tools/`：`connections.json`、`chat_sessions.json`、`ai_settings.json`（数组，含 `is_default`）、`memory.json`、`ai_images/`、`logs/`。
+这是唯一的存储位置：程序不内置任何连接信息，删掉 `connections.json` 就等于从零开始新建连接。

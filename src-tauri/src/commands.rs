@@ -484,16 +484,61 @@ pub fn create_chat_session(state: State<AppState>, title: Option<String>) -> Cha
         messages: vec![],
         created_at: now(),
         updated_at: now(),
+        connection_id: None,
+        database: None,
+        table: None,
     };
     lock_or_recover(&state.sessions).insert(0, s.clone());
     state.save_sessions();
     s
 }
 
+/// 会话绑定的取数范围：面板改一下就用，不发消息也要留住
+#[tauri::command]
+pub fn set_chat_scope(
+    state: State<AppState>,
+    id: String,
+    connection_id: Option<String>,
+    database: Option<String>,
+    table: Option<String>,
+) -> Result<ChatSession, String> {
+    let clean = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let mut sessions = lock_or_recover(&state.sessions);
+    let s = sessions.iter_mut().find(|s| s.id == id).ok_or("会话不存在")?;
+    s.connection_id = clean(&connection_id);
+    s.database = clean(&database);
+    s.table = clean(&table);
+    s.updated_at = now();
+    let saved = s.clone();
+    drop(sessions);
+    state.save_sessions();
+    Ok(saved)
+}
+
+/// 历史消息里的缩略图：文件名换成 data URL 再给前端
+#[tauri::command]
+pub fn ai_image_data_uri(state: State<AppState>, name: String) -> Result<String, String> {
+    image_data_uri(&state, &name)
+}
+
 #[tauri::command]
 pub fn delete_chat_session(state: State<AppState>, id: String) -> Result<(), String> {
+    let images = {
+        let sessions = lock_or_recover(&state.sessions);
+        sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.image_files())
+            .unwrap_or_default()
+    };
     lock_or_recover(&state.sessions).retain(|s| s.id != id);
     state.save_sessions();
+    state.remove_ai_images(&images);
     Ok(())
 }
 
@@ -572,6 +617,88 @@ fn looks_like_db_action(msg: &str) -> bool {
     KEYS.iter().any(|k| msg.contains(k))
 }
 
+// ---------- AI 图片 ----------
+
+/// 一条消息最多几张图
+const MAX_AI_IMAGES: usize = 4;
+/// 单张解码后上限，防止一次请求把内存与网关都撑爆
+const MAX_AI_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+/// 追问时最多把最近几张历史图片重新附带（模型不会记住上一轮的图）
+const MAX_HISTORY_IMAGES: usize = 4;
+
+fn parse_data_url(u: &str) -> Option<(String, Vec<u8>)> {
+    let rest = u.strip_prefix("data:")?;
+    let (mime, b64) = rest.split_once(";base64,")?;
+    if !mime.starts_with("image/") || b64.is_empty() {
+        return None;
+    }
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .ok()?;
+    Some((mime.to_string(), bytes))
+}
+
+fn mime_ext(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        _ => "bin",
+    }
+}
+
+fn ext_mime(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 磁盘上的图片 → data URL；读不到就返回 Err，让调用方决定跳过还是报错
+fn image_data_uri(state: &AppState, name: &str) -> Result<String, String> {
+    let bytes = state.read_ai_image(name)?;
+    use base64::Engine;
+    let ext = name.rsplit('.').next().unwrap_or("");
+    Ok(format!(
+        "data:{};base64,{}",
+        ext_mime(ext),
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
+}
+
+/// 会话已选范围写成提示词
+fn scope_note(state: &AppState, scope: &ChatScope) -> Option<String> {
+    if scope.is_empty() {
+        return None;
+    }
+    let mut s = String::new();
+    if let Some(cid) = &scope.connection_id {
+        let conn = lock_or_recover(&state.connections).iter().find(|c| c.id == *cid).cloned();
+        match conn {
+            Some(c) => s.push_str(&format!(
+                "- 连接：{}（{}，id `{cid}`）\n",
+                c.name,
+                c.kind.label()
+            )),
+            None => s.push_str(&format!("- 连接 id：`{cid}`\n")),
+        }
+    }
+    if let Some(db) = &scope.database {
+        s.push_str(&format!("- 数据库：{db}\n"));
+    }
+    if let Some(t) = &scope.table {
+        s.push_str(&format!("- 当前表/集合/索引：{t}\n"));
+    }
+    Some(s)
+}
+
 // ---------- AI Chat with tools ----------
 
 #[tauri::command]
@@ -581,6 +708,7 @@ pub async fn ai_chat(
     session_id: String,
     user_message: String,
     profile_id: Option<String>,
+    images: Option<Vec<String>>,
 ) -> Result<ChatSession, String> {
     let mut settings = resolve_ai_profile(&state, profile_id.as_deref())?;
     if settings.api_key.is_empty() {
@@ -592,6 +720,26 @@ pub async fn ai_chat(
     // agent tasks need tools by default
     if looks_like_db_action(&user_message) {
         settings.enable_tools = true;
+    }
+
+    // 图片先校验再落盘，会话 JSON 里只留文件名
+    let mut image_files: Vec<String> = Vec::new();
+    for url in images.unwrap_or_default().iter() {
+        let (mime, bytes) = parse_data_url(url).ok_or("图片不受支持：需要 image/png|jpeg|gif|webp|bmp 的 data URL")?;
+        if bytes.len() > MAX_AI_IMAGE_BYTES {
+            return Err(format!(
+                "图片太大：{} MB，单张上限 {} MB",
+                bytes.len() / (1024 * 1024),
+                MAX_AI_IMAGE_BYTES / (1024 * 1024)
+            ));
+        }
+        let name = format!("{}.{}", Uuid::new_v4().simple(), mime_ext(&mime));
+        state.save_ai_image(&name, &bytes)?;
+        image_files.push(name);
+    }
+    if image_files.len() > MAX_AI_IMAGES {
+        state.remove_ai_images(&image_files);
+        return Err(format!("一条消息最多 {MAX_AI_IMAGES} 张图片"));
     }
 
     // load / create session
@@ -607,32 +755,76 @@ pub async fn ai_chat(
                     messages: vec![],
                     created_at: now(),
                     updated_at: now(),
+                    connection_id: None,
+                    database: None,
+                    table: None,
                 },
             );
         }
     }
 
-    let history = {
+    let (history, scope) = {
         let sessions = lock_or_recover(&state.sessions);
-        sessions
-            .iter()
-            .find(|s| s.id == session_id)
-            .map(|s| s.messages.clone())
-            .unwrap_or_default()
+        let s = sessions.iter().find(|s| s.id == session_id);
+        (
+            s.map(|s| s.messages.clone()).unwrap_or_default(),
+            s.map(|s| s.scope()).unwrap_or_default(),
+        )
     };
 
-    let mut pairs: Vec<(String, String)> = history
-        .iter()
-        .map(|m| (m.role.clone(), m.content.clone()))
-        .collect();
-    pairs.push(("user".into(), user_message.clone()));
+    // 历史里的图只重附最近几张，其余按文本继续
+    let mut attach: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in history.iter().rev() {
+        for n in m.images.iter().rev() {
+            if attach.len() >= MAX_HISTORY_IMAGES {
+                break;
+            }
+            attach.insert(n.clone());
+        }
+        if attach.len() >= MAX_HISTORY_IMAGES {
+            break;
+        }
+    }
+
+    let mut msgs: Vec<AiMessage> = Vec::new();
+    for m in &history {
+        let mut images = Vec::new();
+        for n in &m.images {
+            if !attach.contains(n) {
+                continue;
+            }
+            match image_data_uri(&state, n) {
+                Ok(u) => images.push(u),
+                Err(e) => logger::warn("ai_chat", format!("历史图片丢失 {n}: {e}")),
+            }
+        }
+        let mut text = m.content.clone();
+        if !m.images.is_empty() && images.len() < m.images.len() {
+            // 让模型知道这里曾经有图，只是没再传
+            text.push_str(&format!("\n（本条消息含 {} 张图片，其中 {} 张已随本轮重新提供）", m.images.len(), images.len()));
+        }
+        msgs.push(AiMessage {
+            role: m.role.clone(),
+            content: text,
+            images,
+        });
+    }
+    msgs.push(AiMessage {
+        role: "user".into(),
+        content: user_message.clone(),
+        images: image_files
+            .iter()
+            .filter_map(|n| image_data_uri(&state, n).ok())
+            .collect(),
+    });
 
     let facts = crate::ai::memory::list_fact_strings(&lock_or_recover(&state.memory));
-    let (pairs, summary) = maybe_compress_history(&settings, &pairs, 12000).await?;
+    let (msgs, summary) = maybe_compress_history(&settings, &msgs, 12000).await?;
     let ctx = AgentContext {
         settings: settings.clone(),
         memory_facts: facts,
         compressed_summary: summary,
+        scope_note: scope_note(&state, &scope),
     };
     let mut system = build_system_prompt(&ctx);
     system.push_str("\n\n## 实时上下文\n");
@@ -641,8 +833,8 @@ pub async fn ai_chat(
         "\n重要：涉及查库/查表/SQL/连接时，必须调用工具并基于工具结果作答，禁止只口头描述步骤。",
     );
 
-    let mut chat_messages: Vec<(String, String)> = vec![("system".into(), system)];
-    chat_messages.extend(pairs);
+    let mut chat_messages: Vec<AiMessage> = vec![AiMessage::text("system", system)];
+    chat_messages.extend(msgs);
 
     let tools = if settings.enable_tools {
         Some(if settings.provider == "anthropic" {
@@ -689,7 +881,7 @@ pub async fn ai_chat(
         }
         let mut note = resp.content.clone();
         for tc in &resp.tool_calls {
-            let result = execute_tool(&state, &cache, &tc.name, &tc.arguments)
+            let result = execute_tool(&state, &cache, &tc.name, &tc.arguments, &scope)
                 .await
                 .unwrap_or_else(|e| json!({ "error": e }).to_string());
             tool_log.push(json!({
@@ -703,8 +895,8 @@ pub async fn ai_chat(
                 tc.name,
                 result.chars().take(400).collect::<String>()
             ));
-            chat_messages.push((
-                "tool".into(),
+            chat_messages.push(AiMessage::text(
+                "tool",
                 format!(
                     "工具 {} 执行结果:\n{}",
                     tc.name,
@@ -712,7 +904,7 @@ pub async fn ai_chat(
                 ),
             ));
         }
-        chat_messages.push(("assistant".into(), note));
+        chat_messages.push(AiMessage::text("assistant", note));
         // After tools ran, ask model to summarize with force off
     }
 
@@ -726,6 +918,7 @@ pub async fn ai_chat(
 
     let tools_count = tool_log.len();
     let text_len = final_text.len();
+    let image_count = image_files.len();
 
     // persist
     let session = {
@@ -740,6 +933,7 @@ pub async fn ai_chat(
             content: user_message,
             created_at: now(),
             tool_calls: None,
+            images: image_files,
         });
         s.messages.push(ChatMessage {
             id: Uuid::new_v4().to_string(),
@@ -751,6 +945,7 @@ pub async fn ai_chat(
             } else {
                 Some(Value::Array(tool_log))
             },
+            images: vec![],
         });
         if s.title == "新对话" || s.title.is_empty() {
             s.title = s
@@ -765,14 +960,14 @@ pub async fn ai_chat(
     state.save_sessions();
     logger::info(
         "ai_chat",
-        format!("session={session_id} tools={tools_count} chars={text_len}"),
+        format!("session={session_id} tools={tools_count} images={image_count} chars={text_len}"),
     );
     Ok(session)
 }
 
 #[tauri::command]
 pub async fn test_ai_connection(settings: AiSettings) -> Result<String, String> {
-    let msgs = vec![("user".into(), "请回复 OK".into())];
+    let msgs = vec![AiMessage::text("user", "请回复 OK")];
     chat_completion(&settings, &msgs, None)
         .await
         .map(|r| r.content)

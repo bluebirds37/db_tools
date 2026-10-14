@@ -48,6 +48,8 @@ pub fn run() {
             commands::set_default_ai_profile,
             commands::list_chat_sessions,
             commands::create_chat_session,
+            commands::set_chat_scope,
+            commands::ai_image_data_uri,
             commands::delete_chat_session,
             commands::rename_chat_session,
             commands::list_memory_facts,

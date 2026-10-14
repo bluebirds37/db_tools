@@ -214,6 +214,42 @@ pub struct ChatMessage {
     pub created_at: String,
     #[serde(default)]
     pub tool_calls: Option<serde_json::Value>,
+    /// 图片文件名（存在 data_dir/ai_images 下），会话里不落 base64
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+/// 会话绑定的取数范围：智能体不用再自行翻连接列表
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChatScope {
+    pub connection_id: Option<String>,
+    pub database: Option<String>,
+    pub table: Option<String>,
+}
+
+impl ChatScope {
+    pub fn is_empty(&self) -> bool {
+        self.connection_id.is_none() && self.database.is_none() && self.table.is_none()
+    }
+}
+
+/// 发给模型的一条消息；`images` 是 data URL，由 provider 层拼成多模态 content
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+impl AiMessage {
+    pub fn text(role: &str, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            images: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +259,27 @@ pub struct ChatSession {
     pub messages: Vec<ChatMessage>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub table: Option<String>,
+}
+
+impl ChatSession {
+    pub fn scope(&self) -> ChatScope {
+        ChatScope {
+            connection_id: self.connection_id.clone(),
+            database: self.database.clone(),
+            table: self.table.clone(),
+        }
+    }
+
+    /// 删除会话时要一并丢掉的图片文件名
+    pub fn image_files(&self) -> Vec<String> {
+        self.messages.iter().flat_map(|m| m.images.clone()).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

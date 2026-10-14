@@ -16,21 +16,50 @@ fn messages_url(base: &str) -> String {
     }
 }
 
+/// data URL → Anthropic 的 base64 image block；非图片前缀直接忽略
+fn image_block(url: &str) -> Option<Value> {
+    let rest = url.strip_prefix("data:")?;
+    let (mime, data) = rest.split_once(";base64,")?;
+    if !mime.starts_with("image/") || data.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "type": "image",
+        "source": { "type": "base64", "media_type": mime, "data": data }
+    }))
+}
+
+fn user_content(m: &AiMessage) -> Value {
+    let mut parts: Vec<Value> = Vec::new();
+    if !m.content.trim().is_empty() {
+        parts.push(json!({ "type": "text", "text": m.content }));
+    }
+    for url in &m.images {
+        if let Some(b) = image_block(url) {
+            parts.push(b);
+        }
+    }
+    if parts.is_empty() {
+        return json!("(empty)");
+    }
+    Value::Array(parts)
+}
+
 pub async fn complete(
     settings: &AiSettings,
-    messages: &[(String, String)],
+    messages: &[AiMessage],
     tools_json: Option<Value>,
     force_tools: bool,
 ) -> Result<AiChatResponse, String> {
     let mut system = String::new();
     let mut api_messages = Vec::new();
-    for (role, content) in messages {
-        let text = if content.trim().is_empty() {
+    for m in messages {
+        let text = if m.content.trim().is_empty() {
             "(empty)".to_string()
         } else {
-            content.clone()
+            m.content.clone()
         };
-        match role.as_str() {
+        match m.role.as_str() {
             "system" => {
                 if !system.is_empty() {
                     system.push('\n');
@@ -38,7 +67,7 @@ pub async fn complete(
                 system.push_str(&text);
             }
             "assistant" => api_messages.push(json!({ "role": "assistant", "content": text })),
-            _ => api_messages.push(json!({ "role": "user", "content": text })),
+            _ => api_messages.push(json!({ "role": "user", "content": user_content(m) })),
         }
     }
 

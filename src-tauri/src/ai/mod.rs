@@ -10,10 +10,20 @@ pub struct AgentContext {
     pub settings: AiSettings,
     pub memory_facts: Vec<String>,
     pub compressed_summary: Option<String>,
+    /// 会话已选范围的可读描述，由命令层拼好
+    pub scope_note: Option<String>,
 }
 
 pub fn build_system_prompt(ctx: &AgentContext) -> String {
     let mut sp = ctx.settings.system_prompt.clone();
+    if let Some(scope) = &ctx.scope_note {
+        sp.push_str("\n\n## 已选范围\n");
+        sp.push_str(scope);
+        sp.push_str(
+            "\n调用工具时 connection_id / database 可以省略，会按这个范围补齐；\
+            只有用户明确要换库或跨库时，才先调 list_connections / list_databases 确认。",
+        );
+    }
     if !ctx.memory_facts.is_empty() {
         sp.push_str("\n\n## 长期记忆\n");
         for f in &ctx.memory_facts {
@@ -45,30 +55,30 @@ pub fn tool_definitions() -> Value {
         },
         {
             "name": "list_databases",
-            "description": "列出指定连接下的数据库",
+            "description": "列出指定连接下的数据库；connection_id 省略时用会话已选连接",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": { "type": "string", "description": "连接 ID" }
+                    "connection_id": { "type": "string", "description": "连接 ID，可省略" }
                 },
-                "required": ["connection_id"]
+                "required": []
             }
         },
         {
             "name": "list_tables",
-            "description": "列出数据库中的表/集合/索引/键类型",
+            "description": "列出数据库中的表/集合/索引/键类型；connection_id、database 省略时用会话已选范围",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "connection_id": { "type": "string" },
                     "database": { "type": "string" }
                 },
-                "required": ["connection_id", "database"]
+                "required": []
             }
         },
         {
             "name": "describe_table",
-            "description": "查看表结构（字段、主键、索引、外键）",
+            "description": "查看表结构（字段、主键、索引、外键）；连接与库可省略，按会话已选范围补齐",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -76,12 +86,12 @@ pub fn tool_definitions() -> Value {
                     "database": { "type": "string" },
                     "table": { "type": "string" }
                 },
-                "required": ["connection_id", "database", "table"]
+                "required": ["table"]
             }
         },
         {
             "name": "query_data",
-            "description": "分页查询数据。SQL 数据库传 SQL；Redis 传 pattern；Mongo 传 collection|filterJson；ES 传 index|queryJson；Qdrant 传 collection|filterJson",
+            "description": "分页查询数据。SQL 数据库传 SQL；Redis 传 pattern；Mongo 传 collection|filterJson；ES 传 index|queryJson；Qdrant 传 collection|filterJson。connection_id、database 省略时用会话已选范围",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,12 +101,12 @@ pub fn tool_definitions() -> Value {
                     "page": { "type": "integer", "description": "页码从 1 开始" },
                     "page_size": { "type": "integer" }
                 },
-                "required": ["connection_id", "sql"]
+                "required": ["sql"]
             }
         },
         {
             "name": "execute_sql",
-            "description": "执行写操作或管理命令（DDL/DML/Redis 命令等）",
+            "description": "执行写操作或管理命令（DDL/DML/Redis 命令等）；连接与库可省略，按会话已选范围补齐",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -104,12 +114,12 @@ pub fn tool_definitions() -> Value {
                     "database": { "type": "string" },
                     "sql": { "type": "string" }
                 },
-                "required": ["connection_id", "sql"]
+                "required": ["sql"]
             }
         },
         {
             "name": "insert_row",
-            "description": "插入一行/文档/key/向量点",
+            "description": "插入一行/文档/key/向量点；连接与库可省略，按会话已选范围补齐",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -118,12 +128,12 @@ pub fn tool_definitions() -> Value {
                     "table": { "type": "string" },
                     "data": { "type": "object" }
                 },
-                "required": ["connection_id", "table", "data"]
+                "required": ["table", "data"]
             }
         },
         {
             "name": "update_row",
-            "description": "按主键更新一行",
+            "description": "按主键更新一行；连接与库可省略，按会话已选范围补齐",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -133,12 +143,12 @@ pub fn tool_definitions() -> Value {
                     "pk": { "type": "object" },
                     "data": { "type": "object" }
                 },
-                "required": ["connection_id", "table", "pk", "data"]
+                "required": ["table", "pk", "data"]
             }
         },
         {
             "name": "delete_row",
-            "description": "按主键删除一行",
+            "description": "按主键删除一行；连接与库可省略，按会话已选范围补齐",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -147,7 +157,7 @@ pub fn tool_definitions() -> Value {
                     "table": { "type": "string" },
                     "pk": { "type": "object" }
                 },
-                "required": ["connection_id", "table", "pk"]
+                "required": ["table", "pk"]
             }
         },
         {
@@ -201,7 +211,7 @@ pub fn anthropic_tools_payload() -> Value {
 
 pub async fn chat_completion(
     settings: &AiSettings,
-    messages: &[(String, String)],
+    messages: &[AiMessage],
     tools_json: Option<Value>,
 ) -> Result<AiChatResponse, String> {
     chat_completion_opts(settings, messages, tools_json, false).await
@@ -210,7 +220,7 @@ pub async fn chat_completion(
 /// `force_tools`: use tool_choice=required / any so the model must emit tool calls.
 pub async fn chat_completion_opts(
     settings: &AiSettings,
-    messages: &[(String, String)],
+    messages: &[AiMessage],
     tools_json: Option<Value>,
     force_tools: bool,
 ) -> Result<AiChatResponse, String> {
@@ -301,29 +311,30 @@ pub fn parse_tool_calls_from_text(text: &str) -> Vec<crate::models::ToolCallRequ
 /// Estimate rough tokens (chars/2 for mixed zh/en) and compress oldest messages.
 pub async fn maybe_compress_history(
     settings: &AiSettings,
-    messages: &[(String, String)],
+    messages: &[AiMessage],
     max_chars: usize,
-) -> Result<(Vec<(String, String)>, Option<String>), String> {
-    let total: usize = messages.iter().map(|(_, c)| c.len()).sum();
+) -> Result<(Vec<AiMessage>, Option<String>), String> {
+    let total: usize = messages.iter().map(|m| m.content.len()).sum();
     if total < max_chars {
         return Ok((messages.to_vec(), None));
     }
-    // keep system + last 8 messages, summarize the rest
+    // keep last 8 messages, summarize the rest
     let keep = 8.min(messages.len().saturating_sub(2));
     let split_at = messages.len().saturating_sub(keep);
     if split_at == 0 {
         return Ok((messages.to_vec(), None));
     }
     let older = &messages[..split_at];
-    let recent = &messages[split_at..].to_vec();
+    let recent = messages[split_at..].to_vec();
 
-    let mut summary_prompt = vec![(
-        "system".to_string(),
-        "请将以下对话压缩为简洁的中文摘要，保留关键数据库操作、表名、SQL 结论和用户偏好。不超过 400 字。".to_string(),
+    let mut summary_prompt = vec![AiMessage::text(
+        "system",
+        "请将以下对话压缩为简洁的中文摘要，保留关键数据库操作、表名、SQL 结论和用户偏好。不超过 400 字。",
     )];
-    for (r, c) in older {
-        summary_prompt.push((r.clone(), c.chars().take(500).collect()));
+    for m in older {
+        // 摘要是纯文本任务，图片不带过去
+        summary_prompt.push(AiMessage::text(&m.role, m.content.chars().take(500).collect::<String>()));
     }
     let summary = chat_completion(settings, &summary_prompt, None).await?;
-    Ok((recent.clone(), Some(summary.content)))
+    Ok((recent, Some(summary.content)))
 }

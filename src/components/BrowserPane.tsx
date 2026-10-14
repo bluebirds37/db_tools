@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   Zap,
   Plus,
   Pencil,
@@ -42,7 +43,7 @@ import { TableDesigner } from "./TableDesigner";
 import { DocumentEditor } from "./DocumentEditor";
 import { ContextMenu, type ContextMenuState, type ContextMenuItem } from "./ContextMenu";
 import { TransferDialog } from "./TransferDialog";
-import { FilterSelect, fsOptions } from "./FilterSelect";
+import { FilterSelect, fsOptions, type FsOption } from "./FilterSelect";
 
 type Tab = "data" | "schema" | "query";
 
@@ -84,6 +85,145 @@ const KIND_META: Record<
 };
 
 const KIND_DEFAULT = KIND_META.mysql;
+
+/// 筛选条件的值控件与运算符集合按字段类型家族给（参考 Navicat 的筛选器）
+type QFamily = "number" | "date" | "bool" | "text";
+
+const familyOf = (t: string): QFamily => {
+  const s = (t || "").toLowerCase();
+  if (s.includes("bool")) return "bool";
+  if (/(date|time|year)/.test(s)) return "date";
+  if (/(int|num|dec|float|double|real|money|serial)/.test(s)) return "number";
+  return "text";
+};
+
+type QOp = { v: string; label: string; noValue?: boolean; twoValues?: boolean };
+
+const Q_OPS: Record<QFamily, QOp[]> = {
+  text: [
+    { v: "eq", label: "等于" },
+    { v: "ne", label: "不等于" },
+    { v: "like", label: "包含" },
+    { v: "nlike", label: "不包含" },
+    { v: "prefix", label: "开头是" },
+    { v: "suffix", label: "结尾是" },
+    { v: "in", label: "在列表中（逗号分隔）" },
+    { v: "null", label: "为空", noValue: true },
+    { v: "nnul", label: "不为空", noValue: true },
+  ],
+  number: [
+    { v: "eq", label: "等于" },
+    { v: "ne", label: "不等于" },
+    { v: "gt", label: "大于" },
+    { v: "gte", label: "大于等于" },
+    { v: "lt", label: "小于" },
+    { v: "lte", label: "小于等于" },
+    { v: "between", label: "介于", twoValues: true },
+    { v: "in", label: "在列表中（逗号分隔）" },
+    { v: "null", label: "为空", noValue: true },
+    { v: "nnul", label: "不为空", noValue: true },
+  ],
+  date: [
+    { v: "eq", label: "等于" },
+    { v: "gt", label: "晚于" },
+    { v: "lt", label: "早于" },
+    { v: "between", label: "介于", twoValues: true },
+    { v: "null", label: "为空", noValue: true },
+    { v: "nnul", label: "不为空", noValue: true },
+  ],
+  bool: [
+    { v: "true", label: "为真", noValue: true },
+    { v: "false", label: "为假", noValue: true },
+    { v: "null", label: "为空", noValue: true },
+    { v: "nnul", label: "不为空", noValue: true },
+  ],
+};
+
+type QFilter = {
+  id: number;
+  col: string;
+  logic: "and" | "or";
+  op: string;
+  val: string;
+  val2: string;
+  on: boolean;
+};
+
+type QSort = { id: number; col: string; dir: "asc" | "desc" };
+
+const qfOp = (fam: QFamily, op: string) => Q_OPS[fam].find((o) => o.v === op);
+const lit = (v: string) => `'${v.replace(/'/g, "''")}'`;
+const numLit = (v: string) =>
+  /^-?\d+(\.\d+)?$/.test(v.trim()) ? v.trim() : lit(v);
+
+/// 这条草稿会不会真的产出子句：生成 SQL 与「应用」快照共用同一判断，计数才不会骗人
+function qfEmits(f: QFilter, typeOf: (col: string) => string): boolean {
+  if (!f.on || !f.col) return false;
+  const meta = qfOp(familyOf(typeOf(f.col)), f.op);
+  if (!meta) return false;
+  const v = f.val.trim();
+  if (!meta.noValue && !v) return false;
+  if (meta.twoValues && !f.val2.trim()) return false;
+  if (f.op === "in" && !v.split(/[,，]/).some((s) => s.trim())) return false;
+  return true;
+}
+
+/// 逐条左折叠加括号，混用 and / or 时结果与界面顺序一致，不受 SQL 优先级影响
+function buildWhereSql(
+  kind: string,
+  rows: QFilter[],
+  typeOf: (col: string) => string
+): string {
+  let sql = "";
+  for (const f of rows) {
+    if (!qfEmits(f, typeOf)) continue;
+    const fam = familyOf(typeOf(f.col));
+    const v = f.val.trim();
+    const c = ident(kind, f.col);
+    const scalar =
+      fam === "number" && !["like", "nlike"].includes(f.op) ? numLit : lit;
+    let clause = "";
+    switch (f.op) {
+      case "eq": clause = `${c} = ${scalar(v)}`; break;
+      case "ne": clause = `${c} <> ${scalar(v)}`; break;
+      case "gt": clause = `${c} > ${scalar(v)}`; break;
+      case "gte": clause = `${c} >= ${scalar(v)}`; break;
+      case "lt": clause = `${c} < ${scalar(v)}`; break;
+      case "lte": clause = `${c} <= ${scalar(v)}`; break;
+      case "like": clause = `${c} LIKE ${lit(`%${v}%`)}`; break;
+      case "nlike": clause = `${c} NOT LIKE ${lit(`%${v}%`)}`; break;
+      case "prefix": clause = `${c} LIKE ${lit(`${v}%`)}`; break;
+      case "suffix": clause = `${c} LIKE ${lit(`%${v}`)}`; break;
+      case "between":
+        clause = `${c} BETWEEN ${scalar(v)} AND ${scalar(f.val2)}`;
+        break;
+      case "in": {
+        const items = v
+          .split(/[,，]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        clause = `${c} IN (${items.map(scalar).join(", ")})`;
+        break;
+      }
+      case "null": clause = `${c} IS NULL`; break;
+      case "nnul": clause = `${c} IS NOT NULL`; break;
+      case "true":
+        clause = kind === "sqlite" ? `${c} = 1` : `${c} IS TRUE`;
+        break;
+      case "false":
+        clause = kind === "sqlite" ? `${c} = 0` : `${c} IS FALSE`;
+        break;
+      default: continue;
+    }
+    sql = sql ? `(${sql} ${f.logic.toUpperCase()} ${clause})` : clause;
+  }
+  return sql ? ` WHERE ${sql}` : "";
+}
+
+function buildOrderSql(kind: string, sorts: QSort[]): string {
+  const parts = sorts.filter((s) => s.col).map((s) => `${ident(kind, s.col)} ${s.dir.toUpperCase()}`);
+  return parts.length ? ` ORDER BY ${parts.join(", ")}` : "";
+}
 
 /// ES 的元字段：只用于定位文档，不能写进 _source
 const ES_META_FIELDS = [
@@ -517,6 +657,15 @@ export function BrowserPane({
   const presetCount = presets.reduce((n, g) => n + g.items.length, 0);
   const [presetsOpen, setPresetsOpen] = useState(true);
   const sqlRef = useRef<HTMLTextAreaElement | null>(null);
+  const qfSeq = useRef(1);
+  const [qfOpen, setQfOpen] = useState(false);
+  const [qfRows, setQfRows] = useState<QFilter[]>([]);
+  const [qSorts, setQSorts] = useState<QSort[]>([]);
+  // 点「应用」时快照一份，改草稿不会偷偷重查
+  const [qApplied, setQApplied] = useState<{ rows: QFilter[]; sorts: QSort[] }>({
+    rows: [],
+    sorts: [],
+  });
   // Redis 的「表」是键类型分组，没有可创建的对象
   const newObjectLabel =
     kind === "elasticsearch"
@@ -612,6 +761,13 @@ export function BrowserPane({
       } else if (kind === "sqlite") {
         query = `SELECT * FROM "${activeTable}"`;
       }
+      if (SQL_KINDS.includes(kind)) {
+        const typeOf = (col: string) =>
+          columns.find((c) => c.name === col)?.data_type || "";
+        query +=
+          buildWhereSql(kind, qApplied.rows, typeOf) +
+          buildOrderSql(kind, qApplied.sorts);
+      }
       const res = await api.queryPage(connection.id, database, query, page, pageSize);
       setData(res);
     } catch (e) {
@@ -620,7 +776,87 @@ export function BrowserPane({
     } finally {
       setLoading(false);
     }
-  }, [connection, database, activeTable, activeSchema, page, pageSize, setError]);
+  }, [connection, database, activeTable, activeSchema, page, pageSize, setError, columns, qApplied]);
+
+  const colTypeOf = (c: string) =>
+    columns.find((x) => x.name === c)?.data_type || "";
+
+  const qfColumnOptions: FsOption[] = columns.length
+    ? columns.map((c) => ({ value: c.name, label: c.name, hint: c.data_type }))
+    : (data?.columns || []).map((c) => ({ value: c, label: c }));
+
+  const addQFilter = () => {
+    if (columns.length === 0) loadSchema();
+    const first = qfColumnOptions[0]?.value || "";
+    setQfRows((list) => [
+      ...list,
+      {
+        id: qfSeq.current++,
+        col: first,
+        logic: "and",
+        op: "eq",
+        val: "",
+        val2: "",
+        on: true,
+      },
+    ]);
+    setQfOpen(true);
+  };
+
+  const patchQFilter = (id: number, patch: Partial<QFilter>) =>
+    setQfRows((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const removeQFilter = (id: number) =>
+    setQfRows((list) => list.filter((r) => r.id !== id));
+
+  const addQSort = () => {
+    if (columns.length === 0) loadSchema();
+    setQSorts((list) => [
+      ...list,
+      { id: qfSeq.current++, col: qfColumnOptions[0]?.value || "", dir: "asc" },
+    ]);
+    setQfOpen(true);
+  };
+
+  const patchQSort = (id: number, patch: Partial<QSort>) =>
+    setQSorts((list) => list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+
+  const removeQSort = (id: number) =>
+    setQSorts((list) => list.filter((s) => s.id !== id));
+
+  const applyQuery = () => {
+    const kind = connection?.kind || "";
+    const rows = qfRows.filter((r) => qfEmits(r, colTypeOf));
+    const sorts = qSorts.filter((s) => s.col);
+    const w = buildWhereSql(kind, rows, colTypeOf);
+    const o = buildOrderSql(kind, sorts);
+    setQApplied({ rows, sorts });
+    setPage(1);
+    // 全是没填值的行时不会产出任何子句，给一句提示免得看着像没反应
+    if (!w && !o && (qfRows.length || qSorts.length))
+      setExecMsg("没有可应用的条件：请勾选启用、选好字段并填写值");
+  };
+
+  const clearQuery = () => {
+    setQfRows([]);
+    setQSorts([]);
+    setQApplied({ rows: [], sorts: [] });
+    setPage(1);
+  };
+
+  /// 点表头循环：升序 → 降序 → 取消，并立即生效
+  const toggleHeaderSort = (col: string) => {
+    if (!isSqlKind) return;
+    const cur = qSorts.findIndex((s) => s.col === col);
+    let next: QSort[];
+    if (cur < 0) next = [...qSorts, { id: qfSeq.current++, col, dir: "asc" }];
+    else if (qSorts[cur].dir === "asc")
+      next = qSorts.map((s, i) => (i === cur ? { ...s, dir: "desc" } : s));
+    else next = qSorts.filter((_, i) => i !== cur);
+    setQSorts(next);
+    setQApplied((a) => ({ rows: a.rows, sorts: next }));
+    setPage(1);
+  };
 
   const loadSchema = useCallback(async () => {
     if (!connection || !database || !activeTable) return;
@@ -669,6 +905,10 @@ export function BrowserPane({
 
   useEffect(() => {
     setPage(1);
+    setQfRows([]);
+    setQSorts([]);
+    setQApplied({ rows: [], sorts: [] });
+    setQfOpen(false);
   }, [activeTable, database, connection?.id, activeSchema]);
 
   // 切换连接或库时立刻丢掉上一个库的残留内容，避免停留在旧库界面
@@ -1375,6 +1615,24 @@ export function BrowserPane({
                   <RefreshCw size={14} className={loading ? "animate-spin" : ""} />{" "}
                   <span className="btn-label">刷新</span>
                 </button>
+                {isSqlKind && (
+                  <button
+                    className={`btn ${qfOpen || qApplied.rows.length ? "btn-on" : ""}`}
+                    title="按字段添加筛选条件与排序准则"
+                    onClick={() => {
+                      if (columns.length === 0) loadSchema();
+                      setQfOpen((v) => !v);
+                    }}
+                  >
+                    <ListFilter size={14} />{" "}
+                    <span className="btn-label">筛选 &amp; 排序</span>
+                    {qApplied.rows.length + qApplied.sorts.length > 0 && (
+                      <span className="tag tag-accent">
+                        {qApplied.rows.length + qApplied.sorts.length}
+                      </span>
+                    )}
+                  </button>
+                )}
                 <button className="btn" onClick={() => setTransferMode("export")}>
                   <span className="btn-label">导出</span>
                 </button>
@@ -1461,6 +1719,178 @@ export function BrowserPane({
         <div className="flex-1 overflow-hidden flex flex-col">
           {tab === "data" && (
             <>
+              {isSqlKind && qfOpen && (
+                <div
+                  className="qf-box animate-fade-up"
+                  style={{ borderColor: "var(--border)" }}
+                >
+                  <div className="qf-head">
+                    <span className="section-title">筛选</span>
+                    <button
+                      className="btn btn-ghost btn-icon"
+                      title="添加筛选条件"
+                      onClick={addQFilter}
+                    >
+                      <Plus size={13} />
+                    </button>
+                    <span className="qf-tip">
+                      {qfRows.length ? `${qfRows.length} 条` : "点 + 添加条件"}
+                    </span>
+                  </div>
+
+                  {qfRows.map((r, i) => {
+                    const fam = familyOf(colTypeOf(r.col));
+                    const meta = qfOp(fam, r.op);
+                    return (
+                      <div key={r.id} className="qf-row">
+                        <input
+                          type="checkbox"
+                          checked={r.on}
+                          title="启用该条件"
+                          onChange={(e) =>
+                            patchQFilter(r.id, { on: e.target.checked })
+                          }
+                        />
+                        {i > 0 ? (
+                          <FilterSelect
+                            className="qf-logic"
+                            value={r.logic}
+                            options={[
+                              { value: "and", label: "并且 and" },
+                              { value: "or", label: "或者 or" },
+                            ]}
+                            onChange={(v) =>
+                              patchQFilter(r.id, { logic: v as "and" | "or" })
+                            }
+                          />
+                        ) : (
+                          <span className="qf-where">WHERE</span>
+                        )}
+                        <FilterSelect
+                          className="qf-col"
+                          value={r.col}
+                          placeholder="字段"
+                          emptyText="没有字段"
+                          options={qfColumnOptions}
+                          onChange={(v) => {
+                            const nf = familyOf(colTypeOf(v));
+                            patchQFilter(r.id, { col: v, op: Q_OPS[nf][0].v });
+                          }}
+                        />
+                        <FilterSelect
+                          className="qf-op"
+                          value={r.op}
+                          placeholder="运算符"
+                          options={Q_OPS[fam].map((o) => ({
+                            value: o.v,
+                            label: o.label,
+                          }))}
+                          onChange={(v) => patchQFilter(r.id, { op: v })}
+                        />
+                        {!meta?.noValue && (
+                          <input
+                            className="input qf-val"
+                            placeholder={
+                              r.op === "in" ? "a, b, c" : "值"
+                            }
+                            value={r.val}
+                            onChange={(e) =>
+                              patchQFilter(r.id, { val: e.target.value })
+                            }
+                          />
+                        )}
+                        {meta?.twoValues && (
+                          <input
+                            className="input qf-val"
+                            placeholder="到"
+                            value={r.val2}
+                            onChange={(e) =>
+                              patchQFilter(r.id, { val2: e.target.value })
+                            }
+                          />
+                        )}
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="删除该条件"
+                          onClick={() => removeQFilter(r.id)}
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                  <div className="qf-head" style={{ marginTop: 4 }}>
+                    <span className="section-title">排序方式</span>
+                    <button
+                      className="btn btn-ghost btn-icon"
+                      title="添加排序准则"
+                      onClick={addQSort}
+                    >
+                      <Plus size={13} />
+                    </button>
+                    <span className="qf-tip">
+                      {qSorts.length ? `按加入顺序生效` : "点 + 添加，或直接点表头"}
+                    </span>
+                  </div>
+
+                  {qSorts.map((s) => (
+                    <div key={s.id} className="qf-row">
+                      <FilterSelect
+                        className="qf-col"
+                        value={s.col}
+                        placeholder="字段"
+                        emptyText="没有字段"
+                        options={qfColumnOptions}
+                        onChange={(v) => patchQSort(s.id, { col: v })}
+                      />
+                      <FilterSelect
+                        className="qf-dir"
+                        value={s.dir}
+                        options={[
+                          { value: "asc", label: "升序 A→Z" },
+                          { value: "desc", label: "降序 Z→A" },
+                        ]}
+                        onChange={(v) =>
+                          patchQSort(s.id, { dir: v as "asc" | "desc" })
+                        }
+                      />
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        title="删除该排序"
+                        onClick={() => removeQSort(s.id)}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+
+                  <div className="qf-foot">
+                    <button
+                      className="btn btn-primary"
+                      onClick={applyQuery}
+                      disabled={loading}
+                    >
+                      <Play size={13} /> 应用筛选 排序
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={clearQuery}
+                      disabled={
+                        !qApplied.rows.length && !qApplied.sorts.length && !qfRows.length
+                      }
+                    >
+                      清除
+                    </button>
+                    <button className="btn" onClick={() => setQfOpen(false)}>
+                      收起
+                    </button>
+                    <span className="qf-tip">
+                      条件与排序只改查询语句，不写数据；换表后自动清空
+                    </span>
+                  </div>
+                </div>
+              )}
               <div className="flex-1 overflow-auto">
                 {tablesLoading && !activeTable ? (
                   loadingPane
@@ -1478,9 +1908,28 @@ export function BrowserPane({
                     <thead>
                       <tr>
                         <th className="col-num" style={{ width: 52 }}>#</th>
-                        {data.columns.map((c) => (
-                          <th key={c}>{c}</th>
-                        ))}
+                        {data.columns.map((c) => {
+                          const s = qApplied.sorts.find((x) => x.col === c);
+                          return (
+                            <th
+                              key={c}
+                              className={isSqlKind ? "qf-th" : undefined}
+                              title={
+                                isSqlKind
+                                  ? "点击切换：升序 → 降序 → 取消"
+                                  : undefined
+                              }
+                              onClick={() => toggleHeaderSort(c)}
+                            >
+                              {c}
+                              {s && (
+                                <span className="qf-mark">
+                                  {s.dir === "asc" ? "▲" : "▼"}
+                                </span>
+                              )}
+                            </th>
+                          );
+                        })}
                         <th style={{ width: 92 }}>操作</th>
                       </tr>
                     </thead>

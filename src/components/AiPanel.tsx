@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Bot,
   Send,
@@ -14,6 +15,9 @@ import {
   ChevronRight,
   History,
   RefreshCw,
+  Database,
+  ImagePlus,
+  Crosshair,
 } from "lucide-react";
 import { api, type AiSettings, type ChatSession } from "../services/api";
 import { useAppStore } from "../stores/appStore";
@@ -21,10 +25,82 @@ import { FilterSelect } from "./FilterSelect";
 
 const AI_PROFILE_KEY = "db_tools_ai_profile";
 
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+type PendingImage = { id: string; dataUrl: string; name: string; size: number };
+
+const MB = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MB`;
+
+const newId = () =>
+  typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `i${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(new Error(`读取「${file.name}」失败`));
+    fr.readAsDataURL(file);
+  });
+}
+
+/** 历史图片的 data URL 缓存：同一张图切换会话不必重复解码 */
+const uriCache = new Map<string, string>();
+
+/** 从后端按文件名取图片，加载中与丢失都要看得见 */
+function MsgImage({
+  name,
+  onZoom,
+}: {
+  name: string;
+  onZoom: (uri: string) => void;
+}) {
+  const [uri, setUri] = useState<string | null>(uriCache.get(name) ?? null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (uriCache.has(name)) {
+      setUri(uriCache.get(name)!);
+      return;
+    }
+    let alive = true;
+    api
+      .aiImageDataUri(name)
+      .then((u) => {
+        uriCache.set(name, u);
+        if (alive) setUri(u);
+      })
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [name]);
+
+  if (failed)
+    return (
+      <span className="ai-img-missing" title={name}>
+        图片已丢失
+      </span>
+    );
+  if (!uri) return <span className="ai-img ai-img-loading" />;
+  return (
+    <img
+      className="ai-img"
+      src={uri}
+      alt={name}
+      loading="lazy"
+      title="点击放大"
+      onClick={() => onZoom(uri)}
+    />
+  );
+}
+
 const SUGGESTIONS = [
-  "列出本地 MySQL 的库和表",
+  "看下当前范围里有哪些表",
   "查询 users 表前 10 条",
-  "在 Redis 里设置 key foo=bar",
+  "解释一下我粘进来的这张报错截图",
   "记住我偏好中文回复",
 ];
 
@@ -43,7 +119,15 @@ function formatTime(iso: string) {
 }
 
 export function AiPanel() {
-  const { aiOpen, setAiOpen, setError } = useAppStore();
+  const {
+    aiOpen,
+    setAiOpen,
+    setError,
+    connections,
+    activeConnectionId,
+    activeDatabase,
+    activeTable,
+  } = useAppStore();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -59,9 +143,29 @@ export function AiPanel() {
   const [profileId, setProfileId] = useState(
     () => localStorage.getItem(AI_PROFILE_KEY) || ""
   );
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [dbLoading, setDbLoading] = useState(false);
+  const [pending, setPending] = useState<PendingImage[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // 还没建会话时先记在选择器上，新建对话后再落到会话
+  const [draftScope, setDraftScope] = useState<{
+    connection_id: string | null;
+    database: string | null;
+    table: string | null;
+  }>({ connection_id: null, database: null, table: null });
+
   const active = sessions.find((s) => s.id === activeId) || null;
+  const scope = active
+    ? {
+        connection_id: active.connection_id ?? null,
+        database: active.database ?? null,
+        table: active.table ?? null,
+      }
+    : draftScope;
   const activeProfile =
     profiles.find((p) => p.id === profileId) ||
     profiles.find((p) => p.is_default) ||
@@ -87,6 +191,105 @@ export function AiPanel() {
     } finally {
       setProfilesLoading(false);
     }
+  };
+
+  /** 改会话范围：没有会话时先记在草稿上，新建对话后再落库 */
+  const setScope = async (
+    patch: Partial<{
+      connection_id: string | null;
+      database: string | null;
+      table: string | null;
+    }>
+  ) => {
+    const next = { ...scope, ...patch };
+    if (!activeId) {
+      setDraftScope(next);
+      return;
+    }
+    try {
+      const updated = await api.setChatScope(
+        activeId,
+        next.connection_id,
+        next.database,
+        next.table
+      );
+      setSessions((l) => l.map((s) => (s.id === updated.id ? updated : s)));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // 换连接就重取库列表；慢响应回来时若已换开就丢掉
+  useEffect(() => {
+    const cid = scope.connection_id;
+    if (!cid) {
+      setDatabases([]);
+      return;
+    }
+    let alive = true;
+    setDbLoading(true);
+    api
+      .listDatabases(cid)
+      .then((list) => {
+        if (alive) setDatabases(list);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setDatabases([]);
+        setError(String(e));
+      })
+      .finally(() => {
+        if (alive) setDbLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [scope.connection_id]);
+
+  const followBrowser = () => {
+    if (!activeConnectionId || !activeDatabase) {
+      setError("左侧还没选中数据库：先在树上展开连接并点一个库");
+      return;
+    }
+    void setScope({
+      connection_id: activeConnectionId,
+      database: activeDatabase,
+      table: activeTable,
+    });
+  };
+
+  const addImages = async (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (!imgs.length) {
+      setError("只能添加图片文件（png / jpg / gif / webp / bmp）");
+      return;
+    }
+    const room = MAX_IMAGES - pending.length;
+    if (room <= 0) {
+      setError(`一条消息最多 ${MAX_IMAGES} 张图片`);
+      return;
+    }
+    const taken = imgs.slice(0, room);
+    if (taken.length < imgs.length)
+      setError(`一条消息最多 ${MAX_IMAGES} 张，已忽略多出的 ${imgs.length - taken.length} 张`);
+    const next: PendingImage[] = [];
+    for (const f of taken) {
+      if (f.size > MAX_IMAGE_BYTES) {
+        setError(`「${f.name}」${MB(f.size)}，超过单张 ${MB(MAX_IMAGE_BYTES)} 上限`);
+        continue;
+      }
+      try {
+        next.push({
+          id: newId(),
+          dataUrl: await readFileAsDataUrl(f),
+          name: f.name,
+          size: f.size,
+        });
+      } catch (e) {
+        setError(String(e));
+      }
+    }
+    if (next.length) setPending((p) => [...p, ...next]);
   };
 
   const filteredSessions = useMemo(() => {
@@ -127,6 +330,15 @@ export function AiPanel() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [active?.messages.length, busy]);
 
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
+
   const newSession = async () => {
     const s = await api.createChatSession();
     setSessions((list) => [s, ...list]);
@@ -146,20 +358,38 @@ export function AiPanel() {
 
   const send = async (preset?: string) => {
     const text = (preset ?? input).trim();
-    if (!text || busy) return;
+    const imgs = preset ? [] : pending;
+    if ((!text && imgs.length === 0) || busy) return;
     setBusy(true);
     setInput("");
+    setPending([]);
     try {
       let sid = activeId;
       if (!sid) {
-        const s = await api.createChatSession(text.slice(0, 24));
+        const s = await api.createChatSession(text.slice(0, 24) || "图片提问");
         setSessions((list) => [s, ...list]);
         sid = s.id;
         setActiveId(s.id);
+        if (draftScope.connection_id || draftScope.database) {
+          const scoped = await api.setChatScope(
+            s.id,
+            draftScope.connection_id,
+            draftScope.database,
+            draftScope.table
+          );
+          setSessions((list) => list.map((x) => (x.id === scoped.id ? scoped : x)));
+        }
       }
-      const updated = await api.aiChat(sid, text, activeProfile?.id || profileId || null);
+      const updated = await api.aiChat(
+        sid,
+        text,
+        activeProfile?.id || profileId || null,
+        imgs.map((i) => i.dataUrl)
+      );
       setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)));
     } catch (e) {
+      // 消息没出去，附件留在输入区好重试
+      setPending((cur) => (cur.length ? cur : imgs));
       setError(String(e));
     } finally {
       setBusy(false);
@@ -251,6 +481,98 @@ export function AiPanel() {
             className={profilesLoading ? "animate-spin" : ""}
           />
         </button>
+      </div>
+
+      {/* 会话取数范围：选一次，工具调用就不必再翻连接列表 */}
+      <div
+        className="ai-scope"
+        style={{ borderColor: "var(--border)", background: "var(--bg-elevated)" }}
+      >
+        <div className="ai-scope-row">
+          <span className="ai-scope-label">
+            <Database size={11} /> 范围
+          </span>
+          <FilterSelect
+            className="ai-switch"
+            value={scope.connection_id || ""}
+            placeholder="连接"
+            emptyText={
+              connections.length ? "没有匹配的连接" : "还没有保存的连接"
+            }
+            options={connections.map((c) => ({
+              value: c.id,
+              label: c.name,
+              hint: c.kind,
+            }))}
+            onChange={(v) =>
+              void setScope({
+                connection_id: v || null,
+                database: null,
+                table: null,
+              })
+            }
+          />
+          <FilterSelect
+            className="ai-switch"
+            value={scope.database || ""}
+            disabled={!scope.connection_id || dbLoading}
+            placeholder={
+              dbLoading
+                ? "读取库…"
+                : scope.connection_id
+                ? "数据库"
+                : "先选连接"
+            }
+            emptyText={dbLoading ? "正在读取库列表…" : "这个连接没有可选库"}
+            options={databases.map((d) => ({ value: d, label: d }))}
+            onChange={(v) => void setScope({ database: v || null, table: null })}
+          />
+          <button
+            className="btn btn-ghost btn-icon"
+            title="跟随左侧树上选中的库与表"
+            onClick={followBrowser}
+          >
+            <Crosshair size={13} />
+          </button>
+          <button
+            className="btn btn-ghost btn-icon"
+            title="清除范围，改由智能体自己问你要"
+            onClick={() =>
+              void setScope({
+                connection_id: null,
+                database: null,
+                table: null,
+              })
+            }
+            disabled={!scope.connection_id && !scope.database && !scope.table}
+          >
+            <X size={13} />
+          </button>
+        </div>
+        {dbLoading && (
+          <div className="ai-scope-note">
+            <RefreshCw size={10} className="animate-spin" /> 正在读取该连接的库列表
+          </div>
+        )}
+        {scope.connection_id && !dbLoading && databases.length === 0 && (
+          <div className="ai-scope-note" style={{ color: "var(--warn)" }}>
+            没读到库列表，可先手动输入 SQL 或换个连接
+          </div>
+        )}
+        {scope.table && (
+          <div className="ai-scope-row">
+            <span className="tag">
+              当前表 <b className="mono">{scope.table}</b>
+            </span>
+            <button
+              className="btn btn-ghost"
+              style={{ fontSize: 10, padding: "2px 6px" }}
+              onClick={() => void setScope({ table: null })}
+            >
+              不带上表
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 历史对话：可折叠列表 + 搜索 */}
@@ -485,6 +807,13 @@ export function AiPanel() {
               >
                 {m.content}
               </div>
+              {m.images && m.images.length > 0 && (
+                <div className="ai-msg-imgs">
+                  {m.images.map((n) => (
+                    <MsgImage key={n} name={n} onZoom={setLightbox} />
+                  ))}
+                </div>
+              )}
             </div>
           ))
         )}
@@ -512,7 +841,63 @@ export function AiPanel() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="p-3 border-t flex-none" style={{ borderColor: "var(--border)" }}>
+      <div
+        className={`p-3 border-t flex-none ${dragOver ? "ai-dragover" : ""}`}
+        style={{ borderColor: "var(--border)" }}
+        onDragOver={(e) => {
+          if (!e.dataTransfer?.types?.includes("Files")) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer?.files || []);
+          if (!files.length) return;
+          e.preventDefault();
+          setDragOver(false);
+          void addImages(files);
+        }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            e.target.value = "";
+            if (files.length) void addImages(files);
+          }}
+        />
+
+        {pending.length > 0 && (
+          <div className="ai-pending">
+            {pending.map((p) => (
+              <div
+                key={p.id}
+                className="ai-pending-item"
+                title={`${p.name} · ${MB(p.size)}`}
+              >
+                <img src={p.dataUrl} alt={p.name} />
+                <button
+                  type="button"
+                  className="ai-pending-x"
+                  title="移除这张图"
+                  onClick={() =>
+                    setPending((list) => list.filter((x) => x.id !== p.id))
+                  }
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+            <span className="ai-pending-tip">
+              {pending.length}/{MAX_IMAGES} 张 · 单张≤{MB(MAX_IMAGE_BYTES)}
+            </span>
+          </div>
+        )}
+
         <div
           className="flex items-end gap-2 rounded-xl p-1.5"
           style={{
@@ -520,12 +905,27 @@ export function AiPanel() {
             background: "var(--bg-elevated)",
           }}
         >
+          <button
+            className="btn btn-ghost btn-icon"
+            style={{ borderRadius: 10 }}
+            title="添加图片（也可粘贴或拖进来）"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy || pending.length >= MAX_IMAGES}
+          >
+            <ImagePlus size={14} />
+          </button>
           <textarea
             className="flex-1 bg-transparent outline-none resize-none px-2 py-1 text-[12.5px]"
             rows={2}
-            placeholder="描述你想做的数据库操作…  (Enter 发送)"
+            placeholder="描述你想做的数据库操作…  (Enter 发送，可直接粘贴图片)"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.files || []);
+              if (!files.length) return;
+              e.preventDefault();
+              void addImages(files);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -537,8 +937,8 @@ export function AiPanel() {
             className="btn btn-primary btn-icon"
             style={{ borderRadius: 10 }}
             onClick={() => void send()}
-            disabled={busy || !input.trim()}
-            title="发送"
+            disabled={busy || (!input.trim() && pending.length === 0)}
+            title={pending.length ? "发送（含图片）" : "发送"}
           >
             <Send size={14} />
           </button>
@@ -553,6 +953,27 @@ export function AiPanel() {
           </div>
         )}
       </div>
+
+      {/* 放大看图：面板有 transform 动画，浮层必须挂到 body 上才不受裁剪 */}
+      {lightbox &&
+        createPortal(
+          <div
+            className="ai-lightbox"
+            role="dialog"
+            aria-label="图片预览"
+            onClick={() => setLightbox(null)}
+          >
+            <img src={lightbox} alt="图片预览" onClick={(e) => e.stopPropagation()} />
+            <button
+              className="btn btn-ghost btn-icon ai-lightbox-x"
+              title="关闭（Esc）"
+              onClick={() => setLightbox(null)}
+            >
+              <X size={16} />
+            </button>
+          </div>,
+          document.body
+        )}
     </aside>
   );
 }

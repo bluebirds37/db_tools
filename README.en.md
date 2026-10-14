@@ -18,12 +18,12 @@ Topic guides live in [`docs/`](./docs/README.md) and are written in Chinese (thi
 | --- | --- |
 | [01 Quick start](docs/guide/01-quick-start.md) | install, dev run, UI regions, shortcuts, logs |
 | [02 Connections](docs/guide/02-connections.md) | categorized connection picker, testing, connect timeout |
-| [03 Browsing and data](docs/guide/03-browse-and-data.md) | object tree, paged grid, insert / edit / delete with server echo |
+| [03 Browsing and data](docs/guide/03-browse-and-data.md) | object tree, paged grid, filter and sort builder, insert / edit / delete with server echo |
 | [04 Structure design](docs/guide/04-structure-design.md) | database designer, visual table creation, columns / indexes / foreign keys |
 | [05 Non-relational engines](docs/guide/05-non-sql-engines.md) | Redis commands, ES / Qdrant REST, Mongo queries, operation presets |
 | [06 Sync and migration](docs/guide/06-sync-and-migration.md) | cross-engine sync, MySQL↔PostgreSQL migration, per-table reports |
 | [07 Export and backup](docs/guide/07-export-mask-backup.md) | CSV / Excel export, column masking rules, SQL dump |
-| [08 AI agent](docs/guide/08-ai-agent.md) | multiple model profiles with one default, in-chat switching, tools, memory |
+| [08 AI agent](docs/guide/08-ai-agent.md) | model profiles with one default, per-conversation database scope, image questions, tools, memory |
 | [09 Appearance](docs/guide/09-appearance.md) | theme, single global font setting, motion and status feedback |
 
 ## Supported databases
@@ -38,7 +38,7 @@ Topic guides live in [`docs/`](./docs/README.md) and are written in Chinese (thi
 | Elasticsearch | Native REST (`METHOD /path [json]`), mapping management — no SQL emulation layer |
 | Qdrant | Native REST over the collections API |
 
-The sample setup expects local containers on `3307` (MySQL), `15432` / `15433` (PostgreSQL / PgVector), `16379` (Redis), `27017` (MongoDB), `9200` (Elasticsearch), `6333` (Qdrant).
+Nothing is pre-configured: every connection is one you add yourself, and choosing an engine type just prefills that engine's standard default port.
 
 ## Features
 
@@ -47,7 +47,7 @@ The sample setup expects local containers on `3307` (MySQL), `15432` / `15433` (
 - Connection manager with a categorized picker (relational / document / key-value / search / vector), search, recently used types, and connection testing.
 - Databases, tables, columns, indexes and foreign keys; per-engine structure pages only expose operations the engine really supports (e.g. SQLite cannot `ALTER ADD FOREIGN KEY`, Elasticsearch cannot change an existing field type — the UI says so and offers the workable alternative).
 - Visual table designer, database designer (charset / collation / comment / PG extensions) and column editing with type pickers, index and foreign-key management.
-- Data grid with paging, insert / edit / delete, and every write reports back what the server actually did.
+- Data grid with paging, a Navicat-style filter and sort builder (per-column operators with and / or chaining, click a header to cycle asc / desc), insert / edit / delete, and every write reports back what the server actually did.
 
 ### Multiple entry points per engine
 
@@ -65,7 +65,9 @@ The sample setup expects local containers on `3307` (MySQL), `15432` / `15433` (
 ### AI agent
 
 - Several model profiles can be stored, exactly one marked default; the agent panel switches between them per conversation.
-- OpenAI-compatible and Anthropic protocols, tool calling against the current connection, conversation history, long-term memory, context compression.
+- **Per-conversation scope**: pick a connection and database (or copy the current selection from the tree, table included) and it is saved on the session — the tool schema treats `connection_id` / `database` / `table` as optional, so "top 10 rows of this table" needs no round trip through `list_connections`.
+- **Images**: paste, drop or choose screenshots (up to 4 per message, 8 MB each); they are stored as files under `~/.db_tools/ai_images/` so history keeps them, and sent as `image_url` / `input_image` / Anthropic base64 blocks depending on the protocol. The most recent images are re-attached when you ask a follow-up.
+- Tool calling, conversation history, long-term memory, context compression.
 
 ### Appearance
 
@@ -170,7 +172,10 @@ Connections, chat sessions, model profiles and logs live in `~/.db_tools/`:
 | `chat_sessions.json` | agent conversation history |
 | `ai_settings.json` | array of model profiles, one with `is_default: true` (older single-object files are migrated automatically) |
 | `memory.json` | long-term facts the agent keeps |
+| `ai_images/` | images attached to agent messages — the conversation JSON only stores file names |
 | `logs/` | command log, tail-able from the app |
+
+This directory is the only place that data lives: the binary ships no connections, so a machine without `connections.json` starts with an empty list and the sidebar invites you to create one.
 
 ## Notes
 

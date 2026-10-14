@@ -1,5 +1,4 @@
 use crate::models::{AiSettings, ChatSession, ConnectionConfig, MemoryStore};
-use chrono::Utc;
 use uuid::Uuid;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -97,6 +96,8 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 配置全部放在 `~/.db_tools/` 这一个目录里（同多数 CLI/桌面工具的点目录约定），
+    /// 代码里不内置任何连接信息：没有 connections.json 就是空列表，界面引导新建。
     pub fn new() -> Self {
         let data_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -110,9 +111,6 @@ impl AppState {
             data_dir,
         };
         state.load_all();
-        if lock_or_recover(&state.connections).is_empty() {
-            state.seed_defaults();
-        }
         state
     }
 
@@ -177,132 +175,41 @@ impl AppState {
         let _ = std::fs::write(a, serde_json::to_string_pretty(&data).unwrap_or_default());
     }
 
-    fn seed_defaults(&self) {
-        let now = Utc::now().to_rfc3339();
-        let defaults = vec![
-            ConnectionConfig {
-                id: "local-mysql".into(),
-                name: "本地 MySQL".into(),
-                kind: crate::models::DbKind::Mysql,
-                host: Some("localhost".into()),
-                port: Some(3307),
-                username: Some("root".into()),
-                password: Some("root".into()),
-                database: None,
-                options: Default::default(),
-                color: Some("#00758F".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-postgres".into(),
-                name: "本地 PostgreSQL".into(),
-                kind: crate::models::DbKind::Postgres,
-                host: Some("localhost".into()),
-                port: Some(15432),
-                username: Some("postgres".into()),
-                password: Some("postgres".into()),
-                database: Some("postgres".into()),
-                options: Default::default(),
-                color: Some("#336791".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-pgvector".into(),
-                name: "本地 PgVector".into(),
-                kind: crate::models::DbKind::Pgvector,
-                host: Some("localhost".into()),
-                port: Some(15433),
-                username: Some("postgres".into()),
-                password: Some("postgres".into()),
-                database: Some("postgres".into()),
-                options: Default::default(),
-                color: Some("#4169E1".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-redis".into(),
-                name: "本地 Redis".into(),
-                kind: crate::models::DbKind::Redis,
-                host: Some("localhost".into()),
-                port: Some(16379),
-                username: None,
-                password: Some("123456".into()),
-                database: Some("0".into()),
-                options: Default::default(),
-                color: Some("#DC382D".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-mongodb".into(),
-                name: "本地 MongoDB".into(),
-                kind: crate::models::DbKind::Mongodb,
-                host: Some("localhost".into()),
-                port: Some(27017),
-                username: Some("admin".into()),
-                password: Some("tradingagents123".into()),
-                database: None,
-                options: {
-                    let mut m = std::collections::HashMap::new();
-                    m.insert("authSource".to_string(), "admin".to_string());
-                    m
-                },
-                color: Some("#47A248".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-elastic".into(),
-                name: "本地 Elasticsearch".into(),
-                kind: crate::models::DbKind::Elasticsearch,
-                host: Some("localhost".into()),
-                port: Some(9200),
-                username: None,
-                password: None,
-                database: None,
-                options: Default::default(),
-                color: Some("#00BFB3".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-sqlite".into(),
-                name: "本地 SQLite".into(),
-                kind: crate::models::DbKind::Sqlite,
-                host: None,
-                port: None,
-                username: None,
-                password: None,
-                database: None,
-                options: {
-                    let mut m = std::collections::HashMap::new();
-                    let path = self.data_dir.join("local.db").to_string_lossy().to_string();
-                    m.insert("path".to_string(), path);
-                    m
-                },
-                color: Some("#003B57".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-            ConnectionConfig {
-                id: "local-qdrant".into(),
-                name: "本地 Qdrant".into(),
-                kind: crate::models::DbKind::Qdrant,
-                host: Some("localhost".into()),
-                port: Some(6333),
-                username: None,
-                password: None,
-                database: None,
-                options: Default::default(),
-                color: Some("#DC244C".into()),
-                created_at: Some(now.clone()),
-                updated_at: Some(now.clone()),
-            },
-        ];
-        *lock_or_recover(&self.connections) = defaults;
-        self.save_connections();
+    /// 智能体图片目录：会话 JSON 里只存文件名，base64 不进库
+    pub fn ai_images_dir(&self) -> PathBuf {
+        let d = self.data_dir.join("ai_images");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 前端传来的图片名先校验再拼路径，`../` 之类走不出去
+    fn image_path(&self, name: &str) -> Result<PathBuf, String> {
+        let ok = !name.is_empty()
+            && name.len() <= 80
+            && name.chars().all(|c| {
+                c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
+            });
+        if !ok {
+            return Err(format!("非法图片名: {name}"));
+        }
+        Ok(self.ai_images_dir().join(name))
+    }
+
+    pub fn save_ai_image(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let path = self.image_path(name)?;
+        std::fs::write(&path, bytes).map_err(|e| format!("写入图片失败: {e}"))
+    }
+
+    pub fn read_ai_image(&self, name: &str) -> Result<Vec<u8>, String> {
+        let path = self.image_path(name)?;
+        std::fs::read(&path).map_err(|e| format!("读取图片失败: {e}"))
+    }
+
+    pub fn remove_ai_images(&self, names: &[String]) {
+        for n in names {
+            if let Ok(path) = self.image_path(n) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
 }

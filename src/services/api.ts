@@ -116,6 +116,8 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   tool_calls?: unknown;
+  /** ai_images 目录下的文件名，base64 不进会话 JSON */
+  images?: string[];
 }
 
 export interface ChatSession {
@@ -124,6 +126,9 @@ export interface ChatSession {
   messages: ChatMessage[];
   created_at: string;
   updated_at: string;
+  connection_id?: string | null;
+  database?: string | null;
+  table?: string | null;
 }
 
 export interface MemoryFact {
@@ -394,11 +399,30 @@ export const api = {
   addMemoryFact: (content: string) =>
     invoke<void>("add_memory_fact", { content }),
   clearMemoryFacts: () => invoke<void>("clear_memory_facts"),
-  aiChat: (sessionId: string, userMessage: string, profileId?: string | null) =>
+  setChatScope: (
+    id: string,
+    connectionId: string | null,
+    database: string | null,
+    table: string | null
+  ) =>
+    invoke<ChatSession>("set_chat_scope", {
+      id,
+      connectionId: connectionId,
+      database: database,
+      table: table,
+    }),
+  aiImageDataUri: (name: string) => invoke<string>("ai_image_data_uri", { name }),
+  aiChat: (
+    sessionId: string,
+    userMessage: string,
+    profileId?: string | null,
+    images?: string[]
+  ) =>
     invoke<ChatSession>("ai_chat", {
       sessionId,
       userMessage,
       profileId: profileId ?? null,
+      images: images && images.length ? images : null,
     }),
   testAiConnection: (settings: AiSettings) =>
     invoke<string>("test_ai_connection", { settings }),
