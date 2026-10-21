@@ -30,10 +30,23 @@
 
 ## 开发
 
+一键脚本会先体检环境，再决定装依赖 / 启动 / 打包：
+
+| 平台 | 一键启动（dev） | 一键打包 | 只体检 |
+| --- | --- | --- | --- |
+| Windows | 双击 `scripts\dev.bat`，或 `powershell -File scripts\agentdb.ps1 dev` | 双击 `scripts\build.bat` | `scripts\agentdb.ps1 check` |
+| Linux | `./scripts/agentdb.sh dev` | `./scripts/agentdb.sh build` | `./scripts/agentdb.sh check` |
+
+体检覆盖：node 18+ / npm / cargo / rustc、WebView2 运行时（Windows）、webkit2gtk 等系统库（Linux，缺了会给出可复制的 apt 命令，或加 `--with-deps` 让它直接装）、tauri 图标是否齐全（缺图标打包必失败）、`node_modules` 与 44100 端口占用。
+
+常用开关：Windows `-Clean`（先 `cargo clean -p agentdb_app`，坏产物时用）、`-NoInstall`、`-Proxy http://127.0.0.1:7897`；Linux 对应 `--clean` / `--no-install` / `--proxy URL` / `--bundles "deb appimage"`。
+
+手动命令照常可用：
+
 ```bash
 npm install
 npm run tauri dev      # 开发（vite 端口 44100）
-npm run tauri build    # 打包 Windows 安装程序（NSIS）
+npm run tauri build    # 打包（Windows 出 NSIS）
 ```
 
 前端单独构建：`npm run build`（`tsc && vite build`）。

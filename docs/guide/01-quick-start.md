@@ -8,6 +8,20 @@
 - 稳定的 Rust 工具链；Windows 需要 MSVC 链接器与 WebView2 运行时
 - 需要有一个可连的数据库服务；本工具不内置连接，装好后在左侧「+ 新建连接」里自己加（端口对照见 [02 · 连接管理](02-connections.md)）
 
+## 一键脚本
+
+不想记命令就用这两个脚本，它们**先体检环境再动手**：
+
+| | Windows | Linux |
+| --- | --- | --- |
+| 一键启动（dev） | 双击 `scripts\dev.bat` | `./scripts/agentdb.sh dev` |
+| 一键打包 | 双击 `scripts\build.bat` | `./scripts/agentdb.sh build` |
+| 只体检 | `powershell -File scripts\agentdb.ps1 check` | `./scripts/agentdb.sh check` |
+
+体检项：node 18+ / npm / cargo / rustc；Windows 查 WebView2 运行时与 44100 端口占用，Linux 查 webkit2gtk / gtk / rsvg / xdo / patchelf（缺了直接给可复制的 `sudo apt-get install …`，或加 `--with-deps` 让它装）；两边都查 tauri 图标是否齐全（**缺图标打包必失败**）与 `node_modules`（不在就自动 `npm install`）。
+
+开关：Windows `-Clean`（先 `cargo clean -p agentdb_app`，遇到 LNK2019 之类坏产物时用）、`-NoInstall`、`-Proxy http://127.0.0.1:7897`；Linux `--clean` / `--no-install` / `--proxy URL` / `--bundles "deb appimage"`。打包产物路径最后会列出来。
+
 ## 跑起来
 
 ```bash

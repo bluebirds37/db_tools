@@ -112,6 +112,15 @@ Nothing is pre-configured: every connection is one you add yourself, and choosin
 
 Prerequisites: Node.js 18 / 20 / 22+ (vite 6 requirement), a stable Rust toolchain with the MSVC linker on Windows, and the WebView2 runtime.
 
+One-click scripts check the toolchain first, then install / run / package:
+
+| Platform | Dev | Package | Check only |
+| --- | --- | --- | --- |
+| Windows | double-click `scripts\dev.bat`, or `powershell -File scripts\agentdb.ps1 dev` | double-click `scripts\build.bat` | `scripts\agentdb.ps1 check` |
+| Linux | `./scripts/agentdb.sh dev` | `./scripts/agentdb.sh build` | `./scripts/agentdb.sh check` |
+
+The check covers node / npm / cargo / rustc, the WebView2 runtime (Windows), system GUI libraries such as webkit2gtk (Linux — it prints the exact `apt-get` line, or pass `--with-deps` to run it), the Tauri icons (a missing icon always fails packaging), `node_modules`, and port 44100. Flags: `-Clean` / `-NoInstall` / `-Proxy <url>` on Windows, `--clean` / `--no-install` / `--proxy URL` / `--bundles "deb appimage"` on Linux.
+
 ```bash
 npm install
 npm run tauri dev       # vite dev server on port 44100
