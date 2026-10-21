@@ -149,8 +149,8 @@ ensure_npm() {
 
 start_dev() {
   ensure_npm
-  step "启动开发模式（改代码即时热更新，Ctrl+C 退出）"
-  run npx tauri dev
+  step "启动开发模式（自动挑空闲端口，改代码即时热更新，Ctrl+C 退出）"
+  run npm run tauri:dev
 }
 
 start_build() {

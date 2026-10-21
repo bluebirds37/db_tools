@@ -41,11 +41,14 @@
 
 常用开关：Windows `-Clean`（先 `cargo clean -p agentdb_app`，坏产物时用）、`-NoInstall`、`-Proxy http://127.0.0.1:7897`；Linux 对应 `--clean` / `--no-install` / `--proxy URL` / `--bundles "deb appimage"`。
 
+**端口被占用会自动换**：开发端口默认 44100，若被占用（或被 Hyper-V / WSL 整段保留）会自动挑一个空闲端口，并让 vite 与 tauri 用同一个，不用手改配置。
+
 手动命令照常可用：
 
 ```bash
 npm install
-npm run tauri dev      # 开发（vite 端口 44100）
+npm run tauri:dev      # 开发（自动选空闲端口）
+npm run tauri dev      # 开发（固定 44100，端口被占会直接报错）
 npm run tauri build    # 打包（Windows 出 NSIS）
 ```
 

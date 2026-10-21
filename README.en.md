@@ -121,9 +121,12 @@ One-click scripts check the toolchain first, then install / run / package:
 
 The check covers node / npm / cargo / rustc, the WebView2 runtime (Windows), system GUI libraries such as webkit2gtk (Linux — it prints the exact `apt-get` line, or pass `--with-deps` to run it), the Tauri icons (a missing icon always fails packaging), `node_modules`, and port 44100. Flags: `-Clean` / `-NoInstall` / `-Proxy <url>` on Windows, `--clean` / `--no-install` / `--proxy URL` / `--bundles "deb appimage"` on Linux.
 
+Dev port 44100 is only a default: if it is taken (or reserved wholesale by Hyper-V / WSL), `npm run tauri:dev` picks a free port and makes vite and Tauri agree on it.
+
 ```bash
 npm install
-npm run tauri dev       # vite dev server on port 44100
+npm run tauri:dev       # dev with automatic free-port selection
+npm run tauri dev       # dev pinned to 44100 (fails loudly if busy)
 ```
 
 Frontend only:

@@ -26,8 +26,11 @@
 
 ```bash
 npm install
-npm run tauri dev      # 前端 vite 固定端口 44100，改代码即时热更新
+npm run tauri:dev      # 推荐：端口被占会自动换，vite 与 tauri 用同一个
+npm run tauri dev      # 固定 44100，被占用时直接报错
 ```
+
+端口默认 44100（HMR 用下一个）。同时开多个 dev 实例、或本机 Hyper-V / WSL 保留了 44xxx 整段时，`tauri:dev` 会真实 bind 探测并换一个可用端口，控制台会打印换成了哪个。
 
 只构建前端：
 

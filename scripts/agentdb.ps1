@@ -88,13 +88,12 @@ function Check-Env {
     if (Test-Path (Join-Path $Root 'node_modules')) { Ok 'node_modules 已存在' }
     else { Warn '还没装前端依赖，dev/build 会自动 npm install' }
 
-    # 44100 是 tauri devUrl 固定端口，被占用时 vite 会直接失败
-    try {
-        $busy = Get-NetTCPConnection -LocalPort 44100 -State Listen -ErrorAction SilentlyContinue
-        if ($busy) { Warn "端口 44100 已被占用（PID $($busy.OwningProcess -join ',')）；同时开多个 dev 实例会抢端口" }
-        else { Ok '端口 44100 空闲' }
+    # 端口要真实 bind 才算数：Hyper-V / WSL 会保留整段，netstat 里看不到监听者
+    if (Test-Cmd node) {
+        $probe = node scripts/tauri-dev.mjs --check-port 2>&1
+        if ($LASTEXITCODE -eq 0) { Ok "端口 44100 可用" }
+        else { Write-Host "    info $probe；dev 会自动换到空闲端口" -ForegroundColor DarkGray }
     }
-    catch { }
 }
 
 function Ensure-NpmDeps {
@@ -106,8 +105,8 @@ function Ensure-NpmDeps {
 
 function Start-Dev {
     Ensure-NpmDeps
-    Step '启动开发模式（改代码即时热更新，Ctrl+C 退出）'
-    Invoke-Tool npx @('tauri', 'dev')
+    Step '启动开发模式（自动挑空闲端口，改代码即时热更新，Ctrl+C 退出）'
+    Invoke-Tool npm @('run', 'tauri:dev')
 }
 
 function Start-Build {
