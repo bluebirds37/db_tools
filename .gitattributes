@@ -1,5 +1,6 @@
 # 换行策略：shell 脚本必须 LF（否则 WSL/Git Bash 里会报 \r），Windows 脚本用 CRLF
 *.sh text eol=lf
+*.mjs text eol=lf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
