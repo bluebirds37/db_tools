@@ -44,7 +44,7 @@ import {
   type TablespaceInfo,
   type TableExtra,
 } from "../services/api";
-import { ConfirmDialog } from "./Modal";
+import { ConfirmDialog, backdropProps } from "./Modal";
 import { TypePicker, defaultTypeOf } from "./fieldTypes";
 import { TableDesigner } from "./TableDesigner";
 import { DocumentEditor } from "./DocumentEditor";
@@ -3358,7 +3358,7 @@ export function BrowserPane({
 
       {/* 插入弹窗 */}
       {insertOpen && (
-        <div className="modal-backdrop" onClick={() => setInsertOpen(false)}>
+        <div className="modal-backdrop" {...backdropProps(() => setInsertOpen(false))}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-4">
               <span className="brand-mark" style={{ width: 24, height: 24, borderRadius: 7 }}>
@@ -3411,7 +3411,7 @@ export function BrowserPane({
 
       {/* 编辑弹窗 */}
       {editRow && (
-        <div className="modal-backdrop" onClick={() => setEditRow(null)}>
+        <div className="modal-backdrop" {...backdropProps(() => setEditRow(null))}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-4">
               <span className="brand-mark" style={{ width: 24, height: 24, borderRadius: 7 }}>

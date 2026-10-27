@@ -15,7 +15,7 @@ import {
 import { useAppStore } from "../stores/appStore";
 import { api, type ConnectionConfig, type DbKind } from "../services/api";
 import { ConnectionForm } from "./ConnectionForm";
-import { ConfirmDialog } from "./Modal";
+import { ConfirmDialog, backdropProps } from "./Modal";
 import { fetchLogTail, getLogDir } from "../services/logger";
 import { ContextMenu, type ContextMenuState, type ContextMenuItem } from "./ContextMenu";
 import { DatabaseDesigner } from "./DatabaseDesigner";
@@ -440,7 +440,7 @@ export function ConnectionSidebar({
       )}
 
       {showLogs && (
-        <div className="modal-backdrop" onClick={() => setShowLogs(false)}>
+        <div className="modal-backdrop" {...backdropProps(() => setShowLogs(false))}>
           <div className="modal wide" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-sm">应用日志（最近 200 行）</h3>

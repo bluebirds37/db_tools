@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { backdropProps } from "./Modal";
 import {
   X,
   ArrowRight,
@@ -196,7 +197,7 @@ export function MigrationDialog({
   const dstKind = sqlConns.find((c) => c.id === dstConn)?.kind;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps(onClose)}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[15px] font-bold tracking-tight">

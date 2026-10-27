@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { backdropProps } from "./Modal";
 import { Copy, RotateCcw, Star, Trash2, X } from "lucide-react";
 import { api, type AiSettings } from "../services/api";
 import { FilterSelect, type FsOption } from "./FilterSelect";
@@ -162,7 +163,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps(onClose)}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-[15px] font-bold tracking-tight">设置</h3>

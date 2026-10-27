@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { backdropProps } from "./Modal";
 import {
   X,
   SlidersHorizontal,
@@ -237,7 +238,7 @@ export function DatabaseDesigner({
   ];
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps(onClose)}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[15px] font-bold tracking-tight">

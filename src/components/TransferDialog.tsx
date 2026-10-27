@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { backdropProps } from "./Modal";
 import {
   X,
   FolderOpen,
@@ -558,7 +559,7 @@ export function TransferDialog({
     ) : null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps(onClose)}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold">{title}</h3>

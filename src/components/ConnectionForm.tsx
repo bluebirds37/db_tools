@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { backdropProps } from "./Modal";
 import {
   X,
   Plug,
@@ -212,7 +213,7 @@ export function ConnectionForm({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...backdropProps(onClose)}>
       <div className={`modal ${step === 1 ? "wide" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[15px] font-bold tracking-tight">
