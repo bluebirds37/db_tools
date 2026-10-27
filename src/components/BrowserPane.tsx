@@ -22,6 +22,7 @@ import {
   Braces,
   CheckCircle2,
   MousePointerClick,
+  ListChecks,
   AlertTriangle,
   Database,
   Sparkles,
@@ -45,6 +46,7 @@ import {
   type TableExtra,
 } from "../services/api";
 import { ConfirmDialog, backdropProps } from "./Modal";
+import { readPref, writePref } from "../services/localPrefs";
 import { TypePicker, defaultTypeOf } from "./fieldTypes";
 import { TableDesigner } from "./TableDesigner";
 import { DocumentEditor } from "./DocumentEditor";
@@ -700,6 +702,9 @@ export function BrowserPane({
   const sqlRef = useRef<HTMLTextAreaElement | null>(null);
   const qfSeq = useRef(1);
   const [qfOpen, setQfOpen] = useState(false);
+  const [showComments, setShowComments] = useState(
+    () => readPref("show_col_comments") === "1"
+  );
   const [qfRows, setQfRows] = useState<QFilter[]>([]);
   const [qSorts, setQSorts] = useState<QSort[]>([]);
   // 点「应用」时快照一份，改草稿不会偷偷重查
@@ -1027,6 +1032,20 @@ export function BrowserPane({
     if (tab === "data") loadPage();
     if (tab === "schema") loadSchema();
   }, [tab, loadPage, loadSchema]);
+
+  // 双层表头要读字段注释，字段列表还没拉过就先拉一次
+  useEffect(() => {
+    if (showComments && isSqlKind && activeTable && columns.length === 0) loadSchema();
+  }, [showComments, isSqlKind, activeTable, columns.length, loadSchema]);
+
+  const toggleComments = () => {
+    const next = !showComments;
+    setShowComments(next);
+    writePref("show_col_comments", next ? "1" : "0");
+  };
+
+  const commentOf = (c: string) =>
+    columns.find((x) => x.name === c)?.comment?.trim() || "";
 
   // 换到没有该页签的引擎时退回数据页
   useEffect(() => {
@@ -1893,6 +1912,28 @@ export function BrowserPane({
                     )}
                   </button>
                 )}
+                {isSqlKind && (
+                  <button
+                    className={`btn ${showComments ? "btn-on" : ""}`}
+                    title={
+                      showComments
+                        ? "折叠字段描述，只看字段名"
+                        : "展开第二层表头，显示字段描述"
+                    }
+                    onClick={toggleComments}
+                  >
+                    <ListChecks size={14} />{" "}
+                    <span className="btn-label">字段描述</span>
+                  </button>
+                )}
+                {isSqlKind &&
+                  showComments &&
+                  columns.length > 0 &&
+                  !columns.some((c) => (c.comment || '').trim()) && (
+                    <span className="grid-hint" title="结构页的「AI 补全」可以生成字段注释">
+                      该表暂无字段注释
+                    </span>
+                  )}
                 <button className="btn" onClick={() => setTransferMode("export")}>
                   <span className="btn-label">导出</span>
                 </button>
@@ -2185,6 +2226,11 @@ export function BrowserPane({
                               {s && (
                                 <span className="qf-mark">
                                   {s.dir === "asc" ? "▲" : "▼"}
+                                </span>
+                              )}
+                              {showComments && commentOf(c) && (
+                                <span className="th-comment" title={commentOf(c)}>
+                                  {commentOf(c)}
                                 </span>
                               )}
                             </th>

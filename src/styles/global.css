@@ -462,6 +462,27 @@ textarea {
   min-width: 0;
 }
 
+/* 表头第二层：字段描述 */
+.th-comment {
+  display: block;
+  margin-top: 2px;
+  max-width: 180px;
+  font-weight: 400;
+  font-size: 10.5px;
+  line-height: 1.35;
+  letter-spacing: 0;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grid-hint {
+  align-self: center;
+  font-size: 10.5px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+
 /* 对话框里的小字说明（匹配结果、限制原因等） */
 .dialog-hint {
   margin-top: 4px;
