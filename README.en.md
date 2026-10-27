@@ -49,7 +49,7 @@ Nothing is pre-configured: every connection is one you add yourself, and choosin
 - Connection manager with a categorized picker (relational / document / key-value / search / vector), search, recently used types, and connection testing.
 - Databases, tables, columns, indexes and foreign keys; per-engine structure pages only expose operations the engine really supports (e.g. SQLite cannot `ALTER ADD FOREIGN KEY`, Elasticsearch cannot change an existing field type — the UI says so and offers the workable alternative).
 - Visual table designer, database designer (charset / collation / comment / PG extensions) and column editing with type pickers, index and foreign-key management.
-- Data grid with paging, a Navicat-style filter and sort builder (per-column operators with and / or chaining, click a header to cycle asc / desc), insert / edit / delete, and every write reports back what the server actually did.
+- Data grid with paging, a Navicat-style filter and sort builder (per-column operators with and / or chaining, click a header to cycle asc / desc), insert / edit / delete, plus a per-table context menu for CSV/Excel import, clearing rows and dropping the table — every destructive action goes through a red danger confirmation and echoes the server's own message back.
 
 ### Multiple entry points per engine
 

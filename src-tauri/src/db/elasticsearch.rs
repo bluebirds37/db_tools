@@ -331,6 +331,39 @@ impl DbSession for EsSession {
         })
     }
 
+    async fn truncate_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let val = self
+            .req(
+                reqwest::Method::POST,
+                &format!("/{}/_delete_by_query?refresh=true&conflicts=proceed", table),
+                Some(json!({ "query": { "match_all": {} } })),
+            )
+            .await?;
+        if let Some(err) = val.get("error") {
+            return Err(format!("ES 清空失败: {err}"));
+        }
+        let deleted = val.get("deleted").and_then(|v| v.as_u64()).unwrap_or(0);
+        Ok(ExecResult {
+            affected_rows: deleted,
+            last_insert_id: None,
+            message: Some(format!("已清空索引 {table}（删除 {deleted} 篇文档）")),
+        })
+    }
+
+    async fn drop_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let val = self
+            .req(reqwest::Method::DELETE, &format!("/{table}"), None)
+            .await?;
+        if let Some(err) = val.get("error") {
+            return Err(format!("ES 删除索引失败: {err}"));
+        }
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除索引 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         _database: &str,

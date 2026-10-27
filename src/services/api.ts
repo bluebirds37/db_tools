@@ -501,6 +501,10 @@ export const api = {
     format: string;
     createIfMissing: boolean;
   }) => invoke<string>("import_tabular_file", args),
+  truncateTable: (connectionId: string, database: string, table: string) =>
+    invoke<ExecResult>("truncate_table", { connectionId, database, table }),
+  dropTable: (connectionId: string, database: string, table: string) =>
+    invoke<ExecResult>("drop_table", { connectionId, database, table }),
   runSqlScript: (args: {
     connectionId: string;
     database: string;

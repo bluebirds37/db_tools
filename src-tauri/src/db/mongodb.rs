@@ -329,6 +329,35 @@ impl DbSession for MongoSession {
         Err("Mongo 请使用表格视图进行增删改查，或输入 db.xxx.{json}".into())
     }
 
+    async fn truncate_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let db = self.db(database);
+        let res = db
+            .run_command(doc! {
+                "delete": table,
+                "deletes": [ { "q": {}, "limit": 0 } ]
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let n = res.get_i64("n").unwrap_or(0) as u64;
+        Ok(ExecResult {
+            affected_rows: n,
+            last_insert_id: None,
+            message: Some(format!("已清空 {table}（删除 {n} 篇文档）")),
+        })
+    }
+
+    async fn drop_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let db = self.db(database);
+        db.run_command(doc! { "drop": table })
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除集合 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         database: &str,

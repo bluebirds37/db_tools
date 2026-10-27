@@ -291,6 +291,42 @@ impl DbSession for QdrantSession {
         })
     }
 
+    async fn truncate_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let val = self
+            .req(
+                reqwest::Method::POST,
+                &format!("/collections/{table}/points/delete?wait=true"),
+                Some(json!({ "filter": {} })),
+            )
+            .await?;
+        if let Some(err) = val.get("status") {
+            if err.as_str().map(|s| s != "ok").unwrap_or(false) {
+                return Err(format!("Qdrant 清空失败: {val}"));
+            }
+        }
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已清空集合 {table} 的点位")),
+        })
+    }
+
+    async fn drop_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let val = self
+            .req(reqwest::Method::DELETE, &format!("/collections/{table}"), None)
+            .await?;
+        if let Some(status) = val.get("status") {
+            if status.as_str().map(|s| s != "ok").unwrap_or(false) {
+                return Err(format!("Qdrant 删除集合失败: {val}"));
+            }
+        }
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除集合 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         _database: &str,

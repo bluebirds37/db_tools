@@ -1282,6 +1282,44 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
 
 /// Import CSV or SpreadsheetML (.xls) into a table.
 #[tauri::command]
+pub async fn truncate_table(
+    state: State<'_, AppState>,
+    cache: State<'_, SharedCache>,
+    connection_id: String,
+    database: String,
+    table: String,
+) -> Result<ExecResult, String> {
+    let s = get_session(&cache, &state, &connection_id).await?;
+    let res = s
+        .truncate_table(&database, &table)
+        .await
+        .map_err(|e| log_err("truncate_table", &connection_id, &e))?;
+    log_ok(
+        "truncate_table",
+        &connection_id,
+        &format!("db={database} table={table} affected={}", res.affected_rows),
+    );
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn drop_table(
+    state: State<'_, AppState>,
+    cache: State<'_, SharedCache>,
+    connection_id: String,
+    database: String,
+    table: String,
+) -> Result<ExecResult, String> {
+    let s = get_session(&cache, &state, &connection_id).await?;
+    let res = s
+        .drop_table(&database, &table)
+        .await
+        .map_err(|e| log_err("drop_table", &connection_id, &e))?;
+    log_ok("drop_table", &connection_id, &format!("db={database} table={table}"));
+    Ok(res)
+}
+
+#[tauri::command]
 pub async fn import_tabular_file(
     state: State<'_, AppState>,
     cache: State<'_, SharedCache>,

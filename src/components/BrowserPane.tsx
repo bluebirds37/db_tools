@@ -86,6 +86,23 @@ const KIND_META: Record<
 
 const KIND_DEFAULT = KIND_META.mysql;
 
+/// 表级数据操作的单位名；Redis 的「表」只是键类型分组，导入 / 清空 / 删除都不针对它
+const TABLE_UNIT: Record<string, string> = {
+  mongodb: "集合",
+  elasticsearch: "索引",
+  qdrant: "集合",
+};
+const tableUnit = (kind: string) => TABLE_UNIT[kind] || "表";
+const TABLE_OP_KINDS = [
+  "mysql",
+  "postgres",
+  "pgvector",
+  "sqlite",
+  "mongodb",
+  "elasticsearch",
+  "qdrant",
+];
+
 /// 筛选条件的值控件与运算符集合按字段类型家族给（参考 Navicat 的筛选器）
 type QFamily = "number" | "date" | "bool" | "text";
 
@@ -618,6 +635,10 @@ export function BrowserPane({
   const [insertOpen, setInsertOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<unknown[] | null>(null);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [pendingTableOp, setPendingTableOp] = useState<{
+    op: "truncate" | "drop";
+    table: string;
+  } | null>(null);
   const [insertData, setInsertData] = useState<Record<string, string>>({});
   const [tableFilter, setTableFilter] = useState("");
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -777,6 +798,27 @@ export function BrowserPane({
       setLoading(false);
     }
   }, [connection, database, activeTable, activeSchema, page, pageSize, setError, columns, qApplied]);
+
+  /// 右键菜单里的「清空数据 / 删除表」：确认后才执行，结果回显到通知条
+  const runTableOp = async () => {
+    if (!pendingTableOp || !connection || !database) return;
+    const { op, table } = pendingTableOp;
+    setPendingTableOp(null);
+    try {
+      if (op === "truncate") {
+        const res = await api.truncateTable(connection.id, database, table);
+        setExecMsg(res.message || `已清空 ${table}`);
+        if (activeTable === table) await loadPage();
+      } else {
+        const res = await api.dropTable(connection.id, database, table);
+        setExecMsg(res.message || `已删除${tableUnit(connection.kind)} ${table}`);
+        if (activeTable === table) setActiveTable(null);
+        await loadTables();
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   const colTypeOf = (c: string) =>
     columns.find((x) => x.name === c)?.data_type || "";
@@ -1520,6 +1562,33 @@ export function BrowserPane({
                                     },
                                   },
                                 ]
+                              : []),
+                            ...(TABLE_OP_KINDS.includes(connection.kind)
+                              ? ([
+                                  {
+                                    type: "item" as const,
+                                    label: "导入 CSV / Excel…",
+                                    onClick: () => {
+                                      setActiveTable(name);
+                                      onTransfer?.("import", connection, database, name);
+                                    },
+                                  },
+                                  { type: "sep" as const },
+                                  {
+                                    type: "item" as const,
+                                    label: `清空${tableUnit(connection.kind)}数据…`,
+                                    danger: true,
+                                    onClick: () =>
+                                      setPendingTableOp({ op: "truncate", table: name }),
+                                  },
+                                  {
+                                    type: "item" as const,
+                                    label: `删除${tableUnit(connection.kind)}…`,
+                                    danger: true,
+                                    onClick: () =>
+                                      setPendingTableOp({ op: "drop", table: name }),
+                                  },
+                                ] as ContextMenuItem[])
                               : []),
                             { type: "item", label: "同步到其他库…", onClick: () => {
                               setActiveTable(name);
@@ -3024,6 +3093,34 @@ export function BrowserPane({
             </div>
           </div>
         </div>
+      )}
+
+      {pendingTableOp && (
+        <ConfirmDialog
+          title={
+            pendingTableOp.op === "drop"
+              ? `删除${tableUnit(connection.kind)} ${pendingTableOp.table}`
+              : `清空${tableUnit(connection.kind)} ${pendingTableOp.table}`
+          }
+          message={
+            pendingTableOp.op === "drop"
+              ? `「${database}」里的${tableUnit(connection.kind)} ${pendingTableOp.table} 会被 DROP，结构和数据一起消失，不可恢复。确认删除？`
+              : `「${database}」里的 ${pendingTableOp.table} 将删掉全部数据${
+                  (() => {
+                    const est = tables.find(
+                      (t) => t.name === pendingTableOp.table
+                    )?.row_estimate;
+                    return est === null || est === undefined
+                      ? ""
+                      : `（约 ${est.toLocaleString()} 行）`;
+                  })()
+                }，${tableUnit(connection.kind)}结构保留。该操作不可恢复，确认继续？`
+          }
+          danger
+          confirmText={pendingTableOp.op === "drop" ? "删除" : "清空数据"}
+          onCancel={() => setPendingTableOp(null)}
+          onConfirm={() => void runTableOp()}
+        />
       )}
 
       {pendingDelete && (

@@ -535,6 +535,34 @@ impl DbSession for PostgresSession {
         })
     }
 
+    async fn truncate_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let pool = self.open_pool(database).await?;
+        let q = sql_identifier_pg(table);
+        let r = sqlx::raw_sql(&format!("TRUNCATE TABLE {q}"))
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ExecResult {
+            affected_rows: r.rows_affected(),
+            last_insert_id: None,
+            message: Some(format!("已清空 {table}")),
+        })
+    }
+
+    async fn drop_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let pool = self.open_pool(database).await?;
+        let q = sql_identifier_pg(table);
+        sqlx::raw_sql(&format!("DROP TABLE IF EXISTS {q}"))
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除表 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         database: &str,

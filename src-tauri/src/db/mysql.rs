@@ -434,6 +434,44 @@ impl DbSession for MySqlSession {
         })
     }
 
+    /// 被外键引用的表 MySQL 不让 TRUNCATE，退化成 DELETE —— 语义同样是清空全部行
+    async fn truncate_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let pool = self.pool(database).await?;
+        let q = format!("`{}`", table.replace('`', "``"));
+        let (affected, how) = match sqlx::raw_sql(&format!("TRUNCATE TABLE {q}"))
+            .execute(&pool)
+            .await
+        {
+            Ok(r) => (r.rows_affected(), "TRUNCATE"),
+            Err(e1) => {
+                let r = sqlx::raw_sql(&format!("DELETE FROM {q}"))
+                    .execute(&pool)
+                    .await
+                    .map_err(|e2| format!("{e1}；改用 DELETE 也失败：{e2}"))?;
+                (r.rows_affected(), "DELETE")
+            }
+        };
+        Ok(ExecResult {
+            affected_rows: affected,
+            last_insert_id: None,
+            message: Some(format!("已清空 {table}（{how}，影响 {affected} 行）")),
+        })
+    }
+
+    async fn drop_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let pool = self.pool(database).await?;
+        let q = format!("`{}`", table.replace('`', "``"));
+        sqlx::raw_sql(&format!("DROP TABLE IF EXISTS {q}"))
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除表 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         database: &str,

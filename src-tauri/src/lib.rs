@@ -73,6 +73,8 @@ pub fn run() {
             commands::sync_database,
             commands::write_text_file,
             commands::read_text_file,
+            commands::truncate_table,
+            commands::drop_table,
             commands::import_tabular_file,
             commands::run_sql_script,
             commands::get_database_options,

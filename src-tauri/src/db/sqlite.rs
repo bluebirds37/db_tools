@@ -222,6 +222,40 @@ impl DbSession for SqliteSession {
         })
     }
 
+    /// SQLite 没有 TRUNCATE：DELETE 之后再把自增序列归零，行为才和清空一致
+    async fn truncate_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let q = format!("\"{}\"", table.replace('"', "\""));
+        let r = sqlx::raw_sql(&format!("DELETE FROM {q}"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        let seq = sqlx::raw_sql(&format!(
+            "DELETE FROM sqlite_sequence WHERE name = '{}'",
+            table.replace('\'', "''")
+        ))
+        .execute(&self.pool)
+        .await;
+        let reset = if seq.is_ok() { "，自增已归零" } else { "" };
+        Ok(ExecResult {
+            affected_rows: r.rows_affected(),
+            last_insert_id: None,
+            message: Some(format!("已清空 {table}（影响 {} 行{reset}）", r.rows_affected())),
+        })
+    }
+
+    async fn drop_table(&self, _database: &str, table: &str) -> Result<ExecResult, String> {
+        let q = format!("\"{}\"", table.replace('"', "\""));
+        sqlx::raw_sql(&format!("DROP TABLE IF EXISTS {q}"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ExecResult {
+            affected_rows: 0,
+            last_insert_id: None,
+            message: Some(format!("已删除表 {table}")),
+        })
+    }
+
     async fn insert_row(
         &self,
         database: &str,

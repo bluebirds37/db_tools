@@ -70,6 +70,16 @@ pub trait DbSession: Send + Sync {
         page_size: u64,
     ) -> Result<QueryPage, String>;
     async fn execute(&self, database: &str, sql: &str) -> Result<ExecResult, String>;
+    /// 清空该表 / 集合 / 索引的全部数据，结构保留。默认不支持，由各引擎覆写。
+    async fn truncate_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let _ = (database, table);
+        Err("该引擎不支持清空数据".into())
+    }
+    /// 删除整张表 / 集合 / 索引（结构一起没了）。默认不支持。
+    async fn drop_table(&self, database: &str, table: &str) -> Result<ExecResult, String> {
+        let _ = (database, table);
+        Err("该引擎不支持删除表".into())
+    }
     async fn insert_row(
         &self,
         database: &str,
