@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod enrich;
 pub mod memory;
 pub mod openai;
 pub mod tools;

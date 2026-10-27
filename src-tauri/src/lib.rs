@@ -62,6 +62,8 @@ pub fn run() {
             commands::add_memory_fact,
             commands::clear_memory_facts,
             commands::ai_chat,
+            commands::ai_enrich_table,
+            commands::apply_table_comments,
             commands::test_ai_connection,
             commands::log_frontend_error,
             commands::get_log_tail,

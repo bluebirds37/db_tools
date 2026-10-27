@@ -965,6 +965,249 @@ pub async fn ai_chat(
     Ok(session)
 }
 
+/// 单引号字面量转义（注释文本会拼进 DDL）
+fn sql_str(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// 让模型给这张表补注释、给索引写说明并提建议；只返回结果，不写库
+#[tauri::command]
+pub async fn ai_enrich_table(
+    state: State<'_, AppState>,
+    cache: State<'_, SharedCache>,
+    connection_id: String,
+    database: String,
+    table: String,
+    schema: Option<String>,
+    profile_id: Option<String>,
+) -> Result<TableEnrichment, String> {
+    let settings = resolve_ai_profile(&state, profile_id.as_deref())?;
+    if settings.api_key.is_empty() {
+        return Err(format!(
+            "「{}」还没有配置 API Key，请到「设置 → 大模型」填写",
+            settings.display_name()
+        ));
+    }
+    let kind = kind_of(&state, &connection_id)?;
+    if !matches!(
+        kind,
+        DbKind::Mysql | DbKind::Postgres | DbKind::Pgvector | DbKind::Sqlite
+    ) {
+        return Err("表结构补全目前用于 MySQL / PostgreSQL / SQLite".into());
+    }
+    let s = get_session(&cache, &state, &connection_id).await?;
+    let columns = s.list_columns(&database, schema.as_deref(), &table).await?;
+    let indexes = s
+        .list_indexes(&database, schema.as_deref(), &table)
+        .await
+        .unwrap_or_default();
+    let fks = s
+        .list_foreign_keys(&database, schema.as_deref(), &table)
+        .await
+        .unwrap_or_default();
+    let table_comment = s
+        .list_tables(&database, schema.as_deref())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|t| t.name == table)
+        .and_then(|t| t.comment);
+
+    // 样例数据只用来判断业务含义，读不到也照样能补注释
+    let sample_sql = match kind {
+        DbKind::Mysql => format!("SELECT * FROM `{database}`.`{table}` LIMIT 5"),
+        DbKind::Postgres | DbKind::Pgvector => {
+            let t = match schema.as_deref() {
+                Some(sc) if sc != "public" => format!("\"{sc}\".\"{table}\""),
+                _ => format!("\"{table}\""),
+            };
+            format!("SELECT * FROM {t} LIMIT 5")
+        }
+        _ => format!("SELECT * FROM \"{table}\" LIMIT 5"),
+    };
+    let page = s
+        .query_page(&database, &sample_sql, 1, 5)
+        .await
+        .unwrap_or_else(|_| QueryPage {
+            columns: vec![],
+            rows: vec![],
+            total: 0,
+            page: 1,
+            page_size: 5,
+            elapsed_ms: 0,
+            message: None,
+        });
+    let header = page.columns.clone();
+    let shape = crate::ai::enrich::TableShape {
+        kind: kind.label(),
+        database: &database,
+        table: &table,
+        table_comment: table_comment.as_deref(),
+        columns: &columns,
+        indexes: &indexes,
+        fks: &fks,
+        sample_header: &header,
+        sample_rows: &page.rows,
+    };
+    let msgs = vec![AiMessage::text(
+        "user",
+        crate::ai::enrich::build_prompt(&shape),
+    )];
+    let reply = chat_completion(&settings, &msgs, None)
+        .await
+        .map_err(|e| {
+            logger::error("ai_enrich_table.completion", &e);
+            e
+        })?;
+    let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let out = crate::ai::enrich::parse_enrichment(&reply.content, &names, &indexes)
+        .map_err(|e| log_err("ai_enrich_table.parse", &connection_id, &e))?;
+    log_ok(
+        "ai_enrich_table",
+        &connection_id,
+        &format!(
+            "table={table} cols={} idx={} suggest={}",
+            out.column_comments.len(),
+            out.index_notes.len(),
+            out.suggested_indexes.len()
+        ),
+    );
+    Ok(out)
+}
+
+/// 把勾选的注释写回数据库：MySQL 要重述列定义，PostgreSQL 用 COMMENT ON
+#[tauri::command]
+pub async fn apply_table_comments(
+    state: State<'_, AppState>,
+    cache: State<'_, SharedCache>,
+    connection_id: String,
+    database: String,
+    schema: Option<String>,
+    table: String,
+    table_comment: Option<String>,
+    column_comments: Vec<ColumnComment>,
+) -> Result<ExecResult, String> {
+    let kind = kind_of(&state, &connection_id)?;
+    let tc = table_comment.unwrap_or_default().trim().to_string();
+    let cols: Vec<ColumnComment> = column_comments
+        .into_iter()
+        .filter(|c| !c.comment.trim().is_empty())
+        .collect();
+    if tc.is_empty() && cols.is_empty() {
+        return Err("没有要写入的注释：请先勾选至少一条".into());
+    }
+    let s = get_session(&cache, &state, &connection_id).await?;
+    let applied = match kind {
+        DbKind::Mysql => {
+            // 改列注释必须重述整个列定义，所以先读回 information_schema 的真实定义，
+            // 否则 DEFAULT / AUTO_INCREMENT 会被悄悄抹掉
+            let defs = s
+                .query_page(
+                    &database,
+                    &format!(
+                        "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA \
+                         FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = {} AND TABLE_NAME = {}",
+                        sql_str(&database),
+                        sql_str(&table)
+                    ),
+                    1,
+                    500,
+                )
+                .await?;
+            let mut clauses: Vec<String> = Vec::new();
+            if !tc.is_empty() {
+                clauses.push(format!("COMMENT = {}", sql_str(&tc)));
+            }
+            for c in &cols {
+                let Some(row) = defs.rows.iter().find(|r| {
+                    r.first().and_then(|v| v.as_str()) == Some(c.name.as_str())
+                }) else {
+                    return Err(format!("列 {} 已经不存在，请刷新结构后重试", c.name));
+                };
+                let mut def = format!(
+                    "`{}` {}",
+                    c.name.replace('`', "``"),
+                    row.get(1).and_then(|v| v.as_str()).unwrap_or("TEXT")
+                );
+                if row.get(2).and_then(|v| v.as_str()) == Some("NO") {
+                    def.push_str(" NOT NULL");
+                }
+                match row.get(3) {
+                    Some(Value::Null) | None => {}
+                    Some(Value::String(d)) => {
+                        let up = d.to_ascii_uppercase();
+                        if up.starts_with("CURRENT_TIMESTAMP")
+                            || up == "NULL"
+                            || d.parse::<f64>().is_ok()
+                        {
+                            def.push_str(&format!(" DEFAULT {d}"));
+                        } else {
+                            def.push_str(&format!(" DEFAULT {}", sql_str(d)));
+                        }
+                    }
+                    Some(other) => def.push_str(&format!(" DEFAULT {other}")),
+                }
+                if let Some(Value::String(e)) = row.get(4) {
+                    if !e.trim().is_empty() {
+                        def.push(' ');
+                        def.push_str(e.trim());
+                    }
+                }
+                def.push_str(&format!(" COMMENT {}", sql_str(c.comment.trim())));
+                clauses.push(format!("MODIFY COLUMN {def}"));
+            }
+            let stmt = format!(
+                "ALTER TABLE `{}`.`{}` {}",
+                database.replace('`', "``"),
+                table.replace('`', "``"),
+                clauses.join(", ")
+            );
+            s.execute(&database, &stmt).await?;
+            clauses.len()
+        }
+        DbKind::Postgres | DbKind::Pgvector => {
+            let t = match schema.as_deref() {
+                Some(sc) if sc != "public" => format!("\"{sc}\".\"{table}\""),
+                _ => format!("\"{table}\""),
+            };
+            let mut n = 0usize;
+            if !tc.is_empty() {
+                s.execute(
+                    &database,
+                    &format!("COMMENT ON TABLE {t} IS {}", sql_str(&tc)),
+                )
+                .await?;
+                n += 1;
+            }
+            for c in &cols {
+                s.execute(
+                    &database,
+                    &format!(
+                        "COMMENT ON COLUMN {}.\"{}\" IS {}",
+                        t,
+                        c.name.replace('"', "\"\""),
+                        sql_str(c.comment.trim())
+                    ),
+                )
+                .await?;
+                n += 1;
+            }
+            n
+        }
+        _ => return Err("该引擎没有表 / 列注释能力，只能复制建议内容".into()),
+    };
+    let msg = format!("已写入 {applied} 条注释");
+    log_ok(
+        "apply_table_comments",
+        &connection_id,
+        &format!("table={table} {msg}"),
+    );
+    Ok(ExecResult {
+        affected_rows: applied as u64,
+        last_insert_id: None,
+        message: Some(msg),
+    })
+}
 #[tauri::command]
 pub async fn test_ai_connection(settings: AiSettings) -> Result<String, String> {
     let msgs = vec![AiMessage::text("user", "请回复 OK")];

@@ -24,7 +24,14 @@ import {
   MousePointerClick,
   AlertTriangle,
   Database,
+  Sparkles,
+  Copy,
 } from "lucide-react";
+import type {
+  ColumnComment,
+  SuggestedIndex,
+  TableEnrichment,
+} from "../services/api";
 import { useAppStore } from "../stores/appStore";
 import {
   api,
@@ -639,6 +646,19 @@ export function BrowserPane({
     op: "truncate" | "drop";
     table: string;
   } | null>(null);
+  const [enrich, setEnrich] = useState<TableEnrichment | null>(null);
+  const [enrichBusy, setEnrichBusy] = useState(false);
+  const [enrichApplying, setEnrichApplying] = useState(false);
+  const [enrichErr, setEnrichErr] = useState("");
+  const [enrichTable, setEnrichTable] = useState("");
+  const [enrichCols, setEnrichCols] = useState<Record<string, string>>({});
+  const [enrichOn, setEnrichOn] = useState<{
+    table: boolean;
+    cols: Record<string, boolean>;
+    idx: Record<number, boolean>;
+  }>({ table: false, cols: {}, idx: {} });
+  const [pendingEnrichApply, setPendingEnrichApply] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
   const [insertData, setInsertData] = useState<Record<string, string>>({});
   const [tableFilter, setTableFilter] = useState("");
   const [schemas, setSchemas] = useState<string[]>([]);
@@ -1017,6 +1037,9 @@ export function BrowserPane({
   useEffect(() => {
     setColEdit(null);
     setNewIdx({ name: "", columns: "", unique: false });
+    setEnrich(null);
+    setEnrichErr("");
+    setPendingEnrichApply(false);
     setNewFk({
       name: "",
       column: "",
@@ -1349,6 +1372,174 @@ export function BrowserPane({
         : createIndexSql(connection.kind, activeSchema, activeTable, { ...newIdx, name }, cols);
     await runDdl(stmt, `已创建索引 ${name}`);
     setNewIdx({ name: "", columns: "", unique: false });
+  };
+
+  const canWriteComments = ["mysql", "postgres", "pgvector"].includes(
+    connection?.kind || ""
+  );
+
+  const resetEnrich = () => {
+    setEnrich(null);
+    setEnrichErr("");
+    setEnrichTable("");
+    setEnrichCols({});
+    setEnrichOn({ table: false, cols: {}, idx: {} });
+  };
+
+  /** 让模型读结构 + 少量样例，产出注释与索引建议；这一步不写库 */
+  const runEnrich = async () => {
+    if (!connection || !activeTable) return;
+    setEnrichBusy(true);
+    setEnrichErr("");
+    setEnrich(null);
+    try {
+      const r = await api.aiEnrichTable(
+        connection.id,
+        database,
+        activeTable,
+        activeSchema || null
+      );
+      setEnrich(r);
+      setEnrichTable(r.table_comment);
+      setEnrichCols(
+        Object.fromEntries(r.column_comments.map((c) => [c.name, c.comment]))
+      );
+      setEnrichOn({
+        table: !!r.table_comment,
+        cols: Object.fromEntries(r.column_comments.map((c) => [c.name, true])),
+        idx: {},
+      });
+      if (
+        !r.table_comment &&
+        !r.column_comments.length &&
+        !r.index_notes.length &&
+        !r.suggested_indexes.length
+      )
+        setEnrichErr("模型认为这张表没有需要补充的注释或索引。");
+    } catch (e) {
+      setEnrichErr(String(e));
+    } finally {
+      setEnrichBusy(false);
+    }
+  };
+
+  const enrichPicked = (): { cols: ColumnComment[]; idx: SuggestedIndex[] } => {
+    if (!enrich) return { cols: [], idx: [] };
+    const cols = Object.entries(enrichCols)
+      .filter(([name, v]) => enrichOn.cols[name] && v.trim())
+      .map(([name, comment]) => ({ name, comment: comment.trim() }));
+    const idx = enrich.suggested_indexes.filter((_, i) => enrichOn.idx[i]);
+    return { cols, idx };
+  };
+
+  const enrichHasSelection = () => {
+    const { cols, idx } = enrichPicked();
+    return (enrichOn.table && enrichTable.trim()) || cols.length > 0 || idx.length > 0;
+  };
+
+  /** 应用：注释走 apply_table_comments，索引按现有建索引 DDL 一条一条执行 */
+  const applyEnrich = async () => {
+    if (!connection || !activeTable || !enrich) return;
+    setPendingEnrichApply(false);
+    const { cols, idx } = enrichPicked();
+    setEnrichApplying(true);
+    const done: string[] = [];
+    try {
+      if (enrichOn.table && enrichTable.trim()) {
+        const res = await api.applyTableComments({
+          connectionId: connection.id,
+          database,
+          schema: activeSchema || null,
+          table: activeTable,
+          tableComment: enrichTable.trim(),
+          columnComments: cols,
+        });
+        done.push(res.message || "注释已写入");
+      } else if (cols.length) {
+        const res = await api.applyTableComments({
+          connectionId: connection.id,
+          database,
+          schema: activeSchema || null,
+          table: activeTable,
+          tableComment: null,
+          columnComments: cols,
+        });
+        done.push(res.message || "注释已写入");
+      }
+      for (const s of idx) {
+        const stmt = createIndexSql(
+          connection.kind,
+          activeSchema,
+          activeTable,
+          { name: s.name, columns: s.columns.join(", "), unique: s.unique },
+          s.columns
+        );
+        await api.executeSql(connection.id, database, stmt);
+        done.push(`已创建索引 ${s.name}`);
+      }
+      setExecMsg(done.join("；") || "没有勾选任何内容");
+      loadSchema();
+      resetEnrich();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setEnrichApplying(false);
+    }
+  };
+
+  const enrichAsText = () => {
+    if (!enrich) return "";
+    const { cols, idx } = enrichPicked();
+    const lines: string[] = [];
+    if (enrichOn.table && enrichTable.trim()) lines.push(`表注释：${enrichTable.trim()}`);
+    if (cols.length)
+      lines.push("字段注释：", ...cols.map((c) => `  ${c.name} = ${c.comment}`));
+    if (enrich.index_notes.length)
+      lines.push("现有索引说明：", ...enrich.index_notes.map((n) => `  ${n.name}：${n.note}`));
+    if (idx.length)
+      lines.push(
+        "建议索引：",
+        ...idx.map(
+          (s) => `  ${s.name} (${s.columns.join(", ")})${s.unique ? " 唯一" : ""} —— ${s.reason}`
+        )
+      );
+    return lines.join("\n");
+  };
+
+  const copyText = async (text: string, okMsg: string) => {
+    if (!text) {
+      setError("没有可复制的内容");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setExecMsg(okMsg);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setExecMsg(okMsg);
+    }
+  };
+
+  /** 只转结构，不带你数据：dump_table 出来的就是建表语句 */
+  const copyCreateSql = async () => {
+    if (!connection || !activeTable) return;
+    setCopyBusy(true);
+    try {
+      const sql = await api.dumpTable(connection.id, database, activeTable, true, false, 0);
+      await copyText(
+        sql,
+        `建表语句已复制到剪贴板（${sql.split("\n").filter((l) => l.trim()).length} 行）`
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCopyBusy(false);
+    }
   };
 
   const loadRefColumns = async (t: string) => {
@@ -2176,6 +2367,194 @@ export function BrowserPane({
 
           {tab === "schema" && !(tablesLoading && !activeTable) && (
             <div className="flex-1 overflow-auto p-4 space-y-4 stack-in" style={{ background: "var(--bg)" }}>
+              {isSqlKind && activeTable && (
+                <section className="schema-card animate-fade-up">
+                  <header>
+                    <Sparkles size={14} style={{ color: "var(--accent)" }} />
+                    注释与索引补全
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 11, padding: "2px 8px" }}
+                        onClick={runEnrich}
+                        disabled={enrichBusy || enrichApplying}
+                        title="把表结构、索引和 5 行样例发给模型，只读不写"
+                      >
+                        {enrichBusy ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={12} />
+                        )}
+                        {enrichBusy ? "模型读结构中…" : enrich ? "重新生成" : "AI 补全"}
+                      </button>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 11, padding: "2px 8px" }}
+                        onClick={copyCreateSql}
+                        disabled={copyBusy}
+                        title="复制只含结构的建表语句"
+                      >
+                        {copyBusy ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          <Copy size={12} />
+                        )}
+                        复制建表语句
+                      </button>
+                    </div>
+                  </header>
+
+                  {enrichBusy && (
+                    <div className="enrich-hint">
+                      正在读取字段、索引、外键与 5 行样例数据发给模型；这一步不会改动数据库。
+                    </div>
+                  )}
+                  {enrichErr && (
+                    <div className="enrich-hint" style={{ color: "var(--warn)" }}>
+                      {enrichErr}
+                    </div>
+                  )}
+
+                  {enrich && !enrichBusy && (
+                    <div className="enrich-body">
+                      {enrich.table_comment && (
+                        <div className="enrich-row">
+                          <input
+                            type="checkbox"
+                            checked={enrichOn.table}
+                            onChange={(e) =>
+                              setEnrichOn((s) => ({ ...s, table: e.target.checked }))
+                            }
+                          />
+                          <span className="enrich-key">表注释</span>
+                          <input
+                            className="input enrich-val"
+                            value={enrichTable}
+                            onChange={(e) => setEnrichTable(e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {enrich.column_comments.length > 0 && (
+                        <>
+                          <div className="section-title" style={{ marginTop: 6 }}>
+                            字段注释
+                          </div>
+                          {enrich.column_comments.map((c) => (
+                            <div className="enrich-row" key={c.name}>
+                              <input
+                                type="checkbox"
+                                checked={!!enrichOn.cols[c.name]}
+                                onChange={(e) =>
+                                  setEnrichOn((s) => ({
+                                    ...s,
+                                    cols: { ...s.cols, [c.name]: e.target.checked },
+                                  }))
+                                }
+                              />
+                              <span className="enrich-key mono">{c.name}</span>
+                              <span className="enrich-type">
+                                {colTypeOf(c.name) || "—"}
+                              </span>
+                              <span
+                                className="enrich-old"
+                                title={
+                                  columns.find((x) => x.name === c.name)?.comment ||
+                                  "当前没有注释"
+                                }
+                              >
+                                现：{columns.find((x) => x.name === c.name)?.comment || "（无）"}
+                              </span>
+                              <input
+                                className="input enrich-val"
+                                value={enrichCols[c.name] ?? ""}
+                                onChange={(e) =>
+                                  setEnrichCols((m) => ({ ...m, [c.name]: e.target.value }))
+                                }
+                              />
+                            </div>
+                          ))}
+                        </>
+                      )}
+
+                      {enrich.index_notes.length > 0 && (
+                        <>
+                          <div className="section-title" style={{ marginTop: 6 }}>
+                            现有索引说明
+                          </div>
+                          {enrich.index_notes.map((n) => (
+                            <div className="enrich-line" key={n.name}>
+                              <b className="mono">{n.name}</b>
+                              <span>{n.note}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+
+                      {enrich.suggested_indexes.length > 0 && (
+                        <>
+                          <div className="section-title" style={{ marginTop: 6 }}>
+                            建议新建的索引（默认不勾选）
+                          </div>
+                          {enrich.suggested_indexes.map((s, i) => (
+                            <div className="enrich-row" key={`${s.name}-${i}`}>
+                              <input
+                                type="checkbox"
+                                checked={!!enrichOn.idx[i]}
+                                onChange={(e) =>
+                                  setEnrichOn((old) => ({
+                                    ...old,
+                                    idx: { ...old.idx, [i]: e.target.checked },
+                                  }))
+                                }
+                              />
+                              <span className="enrich-key mono">{s.name}</span>
+                              <span className="enrich-type">
+                                ({s.columns.join(", ")}){s.unique ? " 唯一" : ""}
+                              </span>
+                              <span className="enrich-old">{s.reason}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+
+                      <div className="enrich-foot">
+                        <button
+                          className="btn btn-primary"
+                          disabled={!enrichHasSelection() || enrichApplying || !canWriteComments}
+                          onClick={() => setPendingEnrichApply(true)}
+                          title={
+                            canWriteComments
+                              ? "写入勾选的注释并创建勾选的索引"
+                              : "SQLite 没有注释能力，只能复制"
+                          }
+                        >
+                          {enrichApplying ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <CheckCircle2 size={13} />
+                          )}
+                          应用到数据库
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            void copyText(enrichAsText(), "建议内容已复制到剪贴板")
+                          }
+                        >
+                          <Copy size={13} /> 复制建议
+                        </button>
+                        <span className="enrich-hint">
+                          {canWriteComments
+                            ? "只加注释与索引，不改动列定义和数据"
+                            : "SQLite 没有表 / 列注释：只能复制建议内容"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {(connection.kind === "postgres" || connection.kind === "pgvector") && (
                 <section className="schema-card animate-fade-up">
                   <header>
@@ -3093,6 +3472,26 @@ export function BrowserPane({
             </div>
           </div>
         </div>
+      )}
+
+      {pendingEnrichApply && enrich && (
+        <ConfirmDialog
+          title="应用 AI 建议"
+          message={(() => {
+            const { cols, idx } = enrichPicked();
+            const parts: string[] = [];
+            if (enrichOn.table && enrichTable.trim()) parts.push("1 条表注释");
+            if (cols.length) parts.push(`${cols.length} 条字段注释`);
+            if (idx.length)
+              parts.push(
+                `${idx.length} 个索引（${idx.map((s) => s.name).join("、")}）`
+              );
+            return `将执行：${parts.join("、") || "（没勾选内容）"}。只加注释与索引，列定义和现有数据都不会被改动。确认执行？`;
+          })()}
+          confirmText="应用"
+          onCancel={() => setPendingEnrichApply(false)}
+          onConfirm={() => void applyEnrich()}
+        />
       )}
 
       {pendingTableOp && (

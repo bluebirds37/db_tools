@@ -462,6 +462,81 @@ textarea {
   min-width: 0;
 }
 
+/* ---------- 结构页：AI 补全注释与索引 ---------- */
+.enrich-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+}
+.enrich-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.enrich-row input[type='checkbox'] {
+  flex: none;
+}
+.enrich-key {
+  flex: none;
+  min-width: 92px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.enrich-type {
+  flex: none;
+  min-width: 96px;
+  font-size: 10.5px;
+  color: var(--text-subtle);
+}
+.enrich-old {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.enrich-val {
+  flex: 2 1 220px;
+  min-width: 0;
+  font-size: 11.5px;
+  padding: 3px 7px;
+}
+.enrich-line {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 1px 0;
+}
+.enrich-line b {
+  flex: none;
+  min-width: 132px;
+  color: var(--text);
+}
+.enrich-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.enrich-foot .btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.enrich-hint {
+  font-size: 10.5px;
+  color: var(--text-subtle);
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
 /* ---------- 智能体：会话取数范围 ---------- */
 .ai-scope {
   display: flex;

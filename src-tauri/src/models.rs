@@ -206,6 +206,44 @@ pub fn default_system_prompt() -> String {
         .into()
 }
 
+// ---------- 结构页 AI 补全 ----------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TableEnrichment {
+    /// 建议的表 / 集合注释，空表示不改
+    #[serde(default)]
+    pub table_comment: String,
+    #[serde(default)]
+    pub column_comments: Vec<ColumnComment>,
+    /// 现有索引的一句话说明
+    #[serde(default)]
+    pub index_notes: Vec<IndexNote>,
+    #[serde(default)]
+    pub suggested_indexes: Vec<SuggestedIndex>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnComment {
+    pub name: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexNote {
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestedIndex {
+    pub name: String,
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub unique: bool,
+    #[serde(default)]
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: String,

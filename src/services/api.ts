@@ -110,6 +110,31 @@ export interface SaveProfileResult {
   profiles: AiSettings[];
 }
 
+export interface ColumnComment {
+  name: string;
+  comment: string;
+}
+
+export interface IndexNote {
+  name: string;
+  note: string;
+}
+
+export interface SuggestedIndex {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  reason: string;
+}
+
+/** 结构页 AI 补全的结果：注释 + 索引说明 + 新索引建议 */
+export interface TableEnrichment {
+  table_comment: string;
+  column_comments: ColumnComment[];
+  index_notes: IndexNote[];
+  suggested_indexes: SuggestedIndex[];
+}
+
 export interface ChatMessage {
   id: string;
   role: string;
@@ -424,6 +449,28 @@ export const api = {
       profileId: profileId ?? null,
       images: images && images.length ? images : null,
     }),
+  aiEnrichTable: (
+    connectionId: string,
+    database: string,
+    table: string,
+    schema?: string | null,
+    profileId?: string | null
+  ) =>
+    invoke<TableEnrichment>('ai_enrich_table', {
+      connectionId,
+      database,
+      table,
+      schema: schema ?? null,
+      profileId: profileId ?? null,
+    }),
+  applyTableComments: (args: {
+    connectionId: string;
+    database: string;
+    schema?: string | null;
+    table: string;
+    tableComment?: string | null;
+    columnComments: ColumnComment[];
+  }) => invoke<ExecResult>('apply_table_comments', args),
   testAiConnection: (settings: AiSettings) =>
     invoke<string>("test_ai_connection", { settings }),
   exportQuery: (
