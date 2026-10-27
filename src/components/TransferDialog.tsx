@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { backdropProps } from "./Modal";
 import {
   X,
@@ -18,7 +18,7 @@ import {
   type MaskRule,
   type SyncReport,
 } from "../services/api";
-import { FilterSelect, fsOptions } from "./FilterSelect";
+import { FilterSelect, fsOptions, type FsOption } from "./FilterSelect";
 import { readPref, writePref } from "../services/localPrefs";
 
 export type TransferMode =
@@ -58,6 +58,21 @@ const SENSITIVE: { re: RegExp; mode: MaskMode }[] = [
 ];
 
 const MASK_STORE_KEY = "export_masks";
+
+/** 文件名转成可用的表名：去扩展名，非法字符换成下划线 */
+function tableFromFileName(path: string): string {
+  const base = path.split(/[\\/]/).pop() || "";
+  const stem = base.replace(/\.[^.]+$/, "");
+  const cleaned = stem.replace(/[^\w\u4e00-\u9fa5]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!cleaned) return "";
+  return /^[0-9]/.test(cleaned) ? `t_${cleaned}` : cleaned;
+}
+
+/** 忽略大小写在现有表里找同名表 */
+function matchTable(name: string, tables: string[]): string {
+  const lower = name.toLowerCase();
+  return tables.find((t) => t.toLowerCase() === lower) || "";
+}
 
 const SYNC_STATUS: Record<string, string> = {
   created: "已建目标",
@@ -111,6 +126,11 @@ export function TransferDialog({
   const [dstDbsError, setDstDbsError] = useState("");
   const [dstTable, setDstTable] = useState(table || "");
   const [createIfMissing, setCreateIfMissing] = useState(true);
+  const [importTables, setImportTables] = useState<string[]>([]);
+  /** 只有调用方预选的表（右键某张表导入）才不被文件名匹配覆盖 */
+  const presetTable = useRef(table || "");
+  const [importTablesBusy, setImportTablesBusy] = useState(false);
+  const [importHint, setImportHint] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState("");
   const [syncReport, setSyncReport] = useState<SyncReport | null>(null);
@@ -269,6 +289,67 @@ export function TransferDialog({
     }
   };
 
+  // 导入的表列表决定「匹配现有表」还是「新建表」，所以打开对话框就把目标库的表拉回来
+  useEffect(() => {
+    if (mode !== "import") return;
+    let alive = true;
+    setImportTablesBusy(true);
+    api
+      .listTables(connection.id, database)
+      .then((ts) => {
+        if (!alive) return;
+        setImportTables(ts.map((t) => t.name));
+        setImportHint("");
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setImportTables([]);
+        setImportHint(`读取表列表失败，稍后手动选择：${e}`);
+      })
+      .finally(() => {
+        if (alive) setImportTablesBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mode, connection.id, database]);
+
+  // 表列表到齐后校准一次：现有表不必建表，名字大小写以库里的为准
+  useEffect(() => {
+    if (mode !== 'import' || !dstTable || !importTables.length) return;
+    const hit = matchTable(dstTable, importTables);
+    setCreateIfMissing(!hit);
+    if (hit && hit !== dstTable) setDstTable(hit);
+  }, [mode, dstTable, importTables]);
+
+  /** 选中文件后按文件名匹配一次：命中现有表就追加，没命中就新建 */
+  const applyFileName = (path: string) => {
+    const cand = tableFromFileName(path);
+    if (!cand) {
+      setImportHint("没能从文件名取到可用表名，请在下面手动选择目标表");
+      return;
+    }
+    if (importTablesBusy) {
+      setDstTable((prev) => prev || cand);
+      setImportHint(`正在读取表列表，先按文件名填了 ${cand}；列表到齐后会再匹配一次`);
+      return;
+    }
+    const hit = matchTable(cand, importTables);
+    if (hit) {
+      setDstTable(hit);
+      setCreateIfMissing(false);
+      setImportHint(`已按文件名匹配到现有表 ${hit}，数据追加进去`);
+      return;
+    }
+    if (presetTable.current && dstTable === presetTable.current) {
+      setImportHint(`没有与 ${cand} 同名的表，仍写入你指定的 ${presetTable.current}`);
+      return;
+    }
+    setDstTable(cand);
+    setCreateIfMissing(true);
+    setImportHint(`没有同名表，将新建 ${cand}（已勾选自动建表）`);
+  };
+
   const pickOpen = async () => {
     try {
       const filters =
@@ -284,11 +365,27 @@ export function TransferDialog({
         filters,
         title: mode === "import" ? "选择导入文件" : "选择 SQL 脚本",
       });
-      if (typeof path === "string") setOpenPath(path);
+      if (typeof path === "string") {
+        setOpenPath(path);
+        if (mode === "import") applyFileName(path);
+      }
     } catch (e) {
       onMessage(String(e));
     }
   };
+
+  const importTableOptions: FsOption[] = [
+    ...importTables.map((t) => ({ value: t, label: t, hint: "已存在" })),
+    ...(dstTable && !matchTable(dstTable, importTables)
+      ? [
+          {
+            value: dstTable,
+            label: `（新建表）${dstTable}`,
+            hint: "该库没有同名表",
+          },
+        ]
+      : []),
+  ];
 
   const run = async () => {
     setBusy(true);
@@ -429,6 +526,7 @@ export function TransferDialog({
             return;
           }
           setOpenPath(path);
+          applyFileName(path);
         }
         const importFmt = path.toLowerCase().endsWith(".csv") ? "csv" : "excel";
         const targetTable = dstTable || table || "";
@@ -822,13 +920,26 @@ export function TransferDialog({
             <>
               <label className="block">
                 <span className="field-label">目标表名</span>
-                <input
-                  className="input mt-1 mono"
+                <FilterSelect
+                  className="mt-1"
                   value={dstTable}
-                  onChange={(e) => setDstTable(e.target.value)}
-                  placeholder={table || "表名"}
+                  placeholder={
+                    importTablesBusy ? "读取表列表…" : "选现有表，或用文件名新建"
+                  }
+                  emptyText={
+                    importTablesBusy ? "正在读取该库的表列表…" : "这个库还没有表"
+                  }
+                  options={importTableOptions}
+                  onChange={(v) => {
+                    // 手动选过就算指定了，之后选文件不再被文件名匹配覆盖
+                    presetTable.current = v;
+                    setDstTable(v);
+                    const isNew = !matchTable(v, importTables);
+                    setImportHint(isNew ? `将新建表 ${v}` : `追加到现有表 ${v}`);
+                  }}
                 />
               </label>
+              {importHint && <div className="dialog-hint">{importHint}</div>}
               <label className="flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"

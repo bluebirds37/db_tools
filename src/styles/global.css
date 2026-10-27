@@ -462,6 +462,14 @@ textarea {
   min-width: 0;
 }
 
+/* 对话框里的小字说明（匹配结果、限制原因等） */
+.dialog-hint {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-subtle);
+}
+
 /* ---------- 结构页：AI 补全注释与索引 ---------- */
 .enrich-body {
   display: flex;
